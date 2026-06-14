@@ -72,7 +72,7 @@ func (e *Engine) BatchUpdate(payloads []domain.TelemetryPayload) {
 			Lon:      p.Lon,
 			ID:       p.NodeID,
 			Class:    uint16(p.Class),
-			TenantID: p.TenantID, 
+			TenantID: p.TenantID,
 		})
 	}
 
@@ -99,7 +99,6 @@ func (e *Engine) FindNearest(tenantID string, lat, lon, radiusKm float64, reqCla
 
 		dist := geo.Haversine(lat, lon, c.Lat, c.Lon)
 		
-
 		if dist <= radiusKm {
 
 			var eta int
@@ -135,7 +134,7 @@ func (e *Engine) FindNearest(tenantID string, lat, lon, radiusKm float64, reqCla
 		return results[i].ETASec < results[j].ETASec
 	})
 
-	// Limit to top 50 matches to save bandwidth
+	// Limit to top 500 matches to save bandwidth
 	if len(results) > 500 {
 		return results[:500]
 	}
