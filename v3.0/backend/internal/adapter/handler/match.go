@@ -29,7 +29,6 @@ func (h *MatchHandler) GetNearestNodes(c *gin.Context) {
 	radius, errRad := strconv.ParseFloat(c.DefaultQuery("radius_km", "10.0"), 64)
 	assetClass, errClass := strconv.ParseUint(c.DefaultQuery("class", "16"), 10, 16) // Default 16 = Drone
 
-	
 	if errLat != nil || errLon != nil || errRad != nil || errClass != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid query parameters. lat and lon are required."})
 		return

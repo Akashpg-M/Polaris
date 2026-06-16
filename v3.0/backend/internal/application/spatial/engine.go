@@ -1,24 +1,32 @@
 package spatial
 
 import (
+	"hash/fnv"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
-	"sort"
 
-	"github.com/Akashpg-M/polaris/internal/core/domain"
-	"github.com/Akashpg-M/polaris/algo_/quadtree"
 	"github.com/Akashpg-M/polaris/algo_/geo"
-
+	"github.com/Akashpg-M/polaris/algo_/quadtree"
+	"github.com/Akashpg-M/polaris/internal/core/domain"
 )
 
-type Engine struct {
+// ShardCount dictates how many independent memory partitions exist.
+// 32 is a standard default to minimize lock contention across highly concurrent goroutines.
+const ShardCount = 32
+
+type EngineShard struct {
 	mu    sync.RWMutex
 	nodes map[string]*domain.TelemetryPayload
-	qt    *quadtree.SafeQuadTree
 }
 
-// MatchResult is the DTO (Data Transfer Object) sent back to the dispatcher
+type Engine struct {
+	shards []*EngineShard
+	qt     *quadtree.SafeQuadTree
+}
+
+// MatchResult is the DTO sent back to the dispatcher
 type MatchResult struct {
 	NodeID     string  `json:"node_id"`
 	Class      uint16  `json:"asset_class"`
@@ -30,43 +38,58 @@ type MatchResult struct {
 }
 
 func NewEngine() *Engine {
-	// Initialize a bounding box large enough to cover the Earth (or specifically Chennai)
 	bounds := quadtree.Bounds{
-		X:      12.0, // Min Latitude (South bound)
-		Y:      79.5, // Min Longitude (West bound)
-		Width:  2.0,  // Spans up to Latitude 14.0 (North bound)
-		Height: 1.5,  // Spans up to Longitude 81.0 (East bound)
-	}	
+		X:      12.0, // Min Latitude
+		Y:      79.5, // Min Longitude
+		Width:  2.0,
+		Height: 1.5,
+	}
+
+	// Initialize the 32 independent shards
+	shards := make([]*EngineShard, ShardCount)
+	for i := 0; i < ShardCount; i++ {
+		shards[i] = &EngineShard{
+			nodes: make(map[string]*domain.TelemetryPayload),
+		}
+	}
+
 	return &Engine{
-		nodes: make(map[string]*domain.TelemetryPayload),
-		qt:    quadtree.NewSafeQuadTree(bounds),
+		shards: shards,
+		qt:     quadtree.NewSafeQuadTree(bounds),
 	}
 }
 
-// BatchUpdate processes thousands of pings with a single lock
+// getShard picks the correct memory partition using an FNV-1a hash of the NodeID
+func (e *Engine) getShard(nodeID string) *EngineShard {
+	h := fnv.New32a()
+	h.Write([]byte(nodeID))
+	return e.shards[h.Sum32()%ShardCount]
+}
+
+// BatchUpdate processes thousands of pings concurrently without a global lock
 func (e *Engine) BatchUpdate(payloads []domain.TelemetryPayload) {
 	if len(payloads) == 0 {
 		return
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	start := time.Now()
 
 	for _, payload := range payloads {
-		p := payload 
+		p := payload
+		shard := e.getShard(p.NodeID)
 
-		// 1. Check if we already have a previous location for this NodeID
-		if _, exists := e.nodes[p.NodeID]; exists {
-			// Delete the old coordinate from the QuadTree to prevent "ghosts"
+		// 1. Lock ONLY the specific shard for this specific node
+		shard.mu.Lock()
+		if _, exists := shard.nodes[p.NodeID]; exists {
+			// Wipe old tree index entry to prevent ghosts
 			e.qt.Remove(p.NodeID)
 		}
+		
+		// 2. Update RAM Map
+		shard.nodes[p.NodeID] = &p
+		shard.mu.Unlock() // Release the lock immediately
 
-		// 2. Update the RAM Map with the fresh payload
-		e.nodes[p.NodeID] = &p
-
-		// 3. Insert the fresh coordinate into the QuadTree
+		// 3. Insert into the thread-safe QuadTree
 		e.qt.Insert(quadtree.Point{
 			Lat:      p.Lat,
 			Lon:      p.Lon,
@@ -76,41 +99,32 @@ func (e *Engine) BatchUpdate(payloads []domain.TelemetryPayload) {
 		})
 	}
 
-	slog.Debug("Batch update complete", "processed", len(payloads), "duration_ms", time.Since(start).Milliseconds())
+	slog.Debug("Concurrent sharded batch update complete", "processed", len(payloads), "duration_ms", time.Since(start).Milliseconds())
 }
 
-// FindNearest queries the QuadTree, filters by exact distance, and applies context-aware routing.
+// FindNearest queries the QuadTree, filters by exact distance, and applies context-aware routing
 func (e *Engine) FindNearest(tenantID string, lat, lon, radiusKm float64, reqClass uint16) []MatchResult {
-	// 1. Calculate the search boundary
 	x, y, w, h := geo.BoundingBox(lat, lon, radiusKm)
 	searchBounds := quadtree.Bounds{X: x, Y: y, Width: w, Height: h}
 
-	// 2. Hardware-level filter: Query the QuadTree ($O(\log n)$)
 	candidates := e.qt.Search(searchBounds, reqClass)
-
 	var results []MatchResult
 
-	// 3. Refine candidates with exact Earth curvature math and Context-Aware Routing
-	e.mu.RLock()
 	for _, c := range candidates {
 		if c.TenantID != tenantID {
-				continue
+			continue
 		}
 
 		dist := geo.Haversine(lat, lon, c.Lat, c.Lon)
-		
 		if dist <= radiusKm {
-
 			var eta int
 			var routeType string
 
 			if (c.Class & uint16(domain.ClassDrone)) > 0 {
-
 				eta = int((dist / 60.0) * 3600)
 				routeType = "euclidean_air"
 			} else {
-
-				streetDist := dist * 1.4 
+				streetDist := dist * 1.4 // Rough street network multiplier
 				eta = int((streetDist / 40.0) * 3600)
 				routeType = "osrm_street"
 			}
@@ -123,21 +137,16 @@ func (e *Engine) FindNearest(tenantID string, lat, lon, radiusKm float64, reqCla
 				DistanceKm: dist,
 				ETASec:     eta,
 				RouteType:  routeType,
-				
 			})
 		}
 	}
-	e.mu.RUnlock()
 
-	// 4. Sort results by ETA (fastest arrival first)
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].ETASec < results[j].ETASec
 	})
 
-	// Limit to top 500 matches to save bandwidth
 	if len(results) > 500 {
 		return results[:500]
 	}
-
 	return results
 }

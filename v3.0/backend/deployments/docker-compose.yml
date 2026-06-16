@@ -29,7 +29,7 @@ services:
       - "5000:5000"
     command: osrm-routed --algorithm mld /data/chennai-metro.osrm
     volumes:
-      - ../../chennai_map:/data
+      - ../../../chennai_map:/data
 
 volumes:
   polaris_pg_data:
