@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/Akashpg-M/polaris/internal/application/spatial"
-	"github.com/Akashpg-M/polaris/internal/core/domain"
+	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
+	"github.com/Akashpg-M/polaris/backend/internal/core/domain"
 	"github.com/redis/go-redis/v9"
 )
 

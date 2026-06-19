@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Akashpg-M/polaris/internal/application/spatial"
+	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
 	"github.com/gin-gonic/gin"
 )
 

@@ -5,7 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"github.com/jmoiron/sqlx"
-	"github.com/Akashpg-M/polaris/internal/core/domain"
+	"github.com/Akashpg-M/polaris/backend/internal/core/domain"
 )
 
 // PredictiveZoneStrategy uses historical spatial clustering to predict demand

@@ -10,13 +10,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Akashpg-M/polaris/algo_/logger"
-	"github.com/Akashpg-M/polaris/internal/adapter/handler"
-	"github.com/Akashpg-M/polaris/internal/application/orchestrator"
-	"github.com/Akashpg-M/polaris/internal/application/spatial"
-	"github.com/Akashpg-M/polaris/internal/application/stream"
-	"github.com/Akashpg-M/polaris/internal/config"
-	redisinfra "github.com/Akashpg-M/polaris/internal/infra/redis"
+	"github.com/Akashpg-M/polaris/backend/algo_/logger"
+	"github.com/Akashpg-M/polaris/backend/internal/adapter/handler"
+	"github.com/Akashpg-M/polaris/backend/internal/application/orchestrator"
+	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
+	"github.com/Akashpg-M/polaris/backend/internal/application/stream"
+	"github.com/Akashpg-M/polaris/backend/internal/config"
+	redisinfra "github.com/Akashpg-M/polaris/backend/internal/infra/redis"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -43,8 +43,16 @@ func main() {
 	defer cancel()
 
 	// 2. Initialize Dependencies (Using the nested Config structs)
-	redisConsumer, _ := stream.NewRedisConsumer(cfg.Redis.URL, engine)
-	go redisConsumer.Start(ctx, "engine-node-1")
+	// redisConsumer, _ := stream.NewRedisConsumer(cfg.Redis.URL, engine)
+	// go redisConsumer.Start(ctx, "engine-node-1")
+
+	kafkaBroker := os.Getenv("KAFKA_BROKER_URL")
+	if kafkaBroker == "" {
+		kafkaBroker = "localhost:9092"
+	}
+
+	kafkaConsumer := stream.NewKafkaConsumer(kafkaBroker, engine)
+	go kafkaConsumer.Start(ctx, "engine-node-1")
 
 	archiver, err := stream.NewPostgresArchiver(cfg.Redis.URL, cfg.DB.URL)
 	if err != nil {

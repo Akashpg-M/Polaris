@@ -1,4 +1,4 @@
-module github.com/Akashpg-M/polaris
+module github.com/Akashpg-M/polaris/backend
 
 go 1.25.0
 

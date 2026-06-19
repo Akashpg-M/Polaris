@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Akashpg-M/polaris/algo_/geo"
-	"github.com/Akashpg-M/polaris/algo_/quadtree"
-	"github.com/Akashpg-M/polaris/internal/core/domain"
+	"github.com/Akashpg-M/polaris/backend/algo_/geo"
+	"github.com/Akashpg-M/polaris/backend/algo_/quadtree"
+	"github.com/Akashpg-M/polaris/backend/internal/core/domain"
 )
 
 // ShardCount dictates how many independent memory partitions exist.
@@ -38,25 +38,12 @@ type MatchResult struct {
 }
 
 func NewEngine() *Engine {
-	bounds := quadtree.Bounds{
-		X:      12.0, // Min Latitude
-		Y:      79.5, // Min Longitude
-		Width:  2.0,
-		Height: 1.5,
-	}
-
-	// Initialize the 32 independent shards
+	bounds := quadtree.Bounds{X: 12.0, Y: 79.5, Width: 2.0, Height: 1.5}
 	shards := make([]*EngineShard, ShardCount)
 	for i := 0; i < ShardCount; i++ {
-		shards[i] = &EngineShard{
-			nodes: make(map[string]*domain.TelemetryPayload),
-		}
+		shards[i] = &EngineShard{nodes: make(map[string]*pb.SpatialObject)}
 	}
-
-	return &Engine{
-		shards: shards,
-		qt:     quadtree.NewSafeQuadTree(bounds),
-	}
+	return &Engine{shards: shards, qt: quadtree.NewSafeQuadTree(bounds)}
 }
 
 // getShard picks the correct memory partition using an FNV-1a hash of the NodeID
@@ -66,87 +53,57 @@ func (e *Engine) getShard(nodeID string) *EngineShard {
 	return e.shards[h.Sum32()%ShardCount]
 }
 
-// BatchUpdate processes thousands of pings concurrently without a global lock
-func (e *Engine) BatchUpdate(payloads []domain.TelemetryPayload) {
-	if len(payloads) == 0 {
-		return
-	}
 
-	start := time.Now()
+func (e *Engine) BatchUpdate(payloads []*pb.SpatialObject) {
+	if len(payloads) == 0 { return }
 
-	for _, payload := range payloads {
-		p := payload
-		shard := e.getShard(p.NodeID)
+	for _, p := range payloads {
+		shard := e.getShard(p.Id)
 
-		// 1. Lock ONLY the specific shard for this specific node
 		shard.mu.Lock()
-		if _, exists := shard.nodes[p.NodeID]; exists {
-			// Wipe old tree index entry to prevent ghosts
-			e.qt.Remove(p.NodeID)
+		if _, exists := shard.nodes[p.Id]; exists {
+			e.qt.Remove(p.Id)
 		}
-		
-		// 2. Update RAM Map
-		shard.nodes[p.NodeID] = &p
-		shard.mu.Unlock() // Release the lock immediately
+		shard.nodes[p.Id] = p
+		shard.mu.Unlock()
 
-		// 3. Insert into the thread-safe QuadTree
 		e.qt.Insert(quadtree.Point{
 			Lat:      p.Lat,
 			Lon:      p.Lon,
-			ID:       p.NodeID,
-			Class:    uint16(p.Class),
-			TenantID: p.TenantID,
+			ID:       p.Id,
+			Class:    uint16(p.Type), // Map the Proto Enum to the QuadTree Class
+			TenantID: p.TenantId,
 		})
 	}
-
-	slog.Debug("Concurrent sharded batch update complete", "processed", len(payloads), "duration_ms", time.Since(start).Milliseconds())
 }
 
-// FindNearest queries the QuadTree, filters by exact distance, and applies context-aware routing
-func (e *Engine) FindNearest(tenantID string, lat, lon, radiusKm float64, reqClass uint16) []MatchResult {
+func (e *Engine) FindNearest(tenantID string, lat, lon, radiusKm float64, reqType pb.NodeType) []MatchResult {
 	x, y, w, h := geo.BoundingBox(lat, lon, radiusKm)
 	searchBounds := quadtree.Bounds{X: x, Y: y, Width: w, Height: h}
 
-	candidates := e.qt.Search(searchBounds, reqClass)
+	candidates := e.qt.Search(searchBounds, uint16(reqType))
 	var results []MatchResult
 
 	for _, c := range candidates {
-		if c.TenantID != tenantID {
-			continue
-		}
+		if c.TenantID != tenantID { continue }
 
 		dist := geo.Haversine(lat, lon, c.Lat, c.Lon)
 		if dist <= radiusKm {
-			var eta int
-			var routeType string
-
-			if (c.Class & uint16(domain.ClassDrone)) > 0 {
-				eta = int((dist / 60.0) * 3600)
-				routeType = "euclidean_air"
-			} else {
-				streetDist := dist * 1.4 // Rough street network multiplier
-				eta = int((streetDist / 40.0) * 3600)
-				routeType = "osrm_street"
-			}
+			
+			eta := int((dist / 40.0) * 3600) // simplified ETA
 
 			results = append(results, MatchResult{
 				NodeID:     c.ID,
-				Class:      c.Class,
+				Type:       pb.NodeType(c.Class),
 				Lat:        c.Lat,
 				Lon:        c.Lon,
 				DistanceKm: dist,
 				ETASec:     eta,
-				RouteType:  routeType,
 			})
 		}
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].ETASec < results[j].ETASec
-	})
-
-	if len(results) > 500 {
-		return results[:500]
-	}
+	sort.Slice(results, func(i, j int) bool { return results[i].ETASec < results[j].ETASec })
+	if len(results) > 500 { return results[:500] }
 	return results
 }

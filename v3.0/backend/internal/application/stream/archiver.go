@@ -2,106 +2,96 @@ package stream
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"time"
 
-	"github.com/Akashpg-M/polaris/internal/core/domain"
+	"github.com/Akashpg-M/polaris/internal/adapter/repository"
+	"github.com/Akashpg-M/polaris/internal/core/domain/pb"
 	"github.com/jmoiron/sqlx"
-	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 	_ "github.com/lib/pq"
+	"google.golang.org/protobuf/proto"
 )
 
-const DeadLetterStreamKey = "telemetry:dead_letters"
+const DeadLetterTopic = "telemetry.dead_letters"
 
-type PostgresArchiver struct {
-	redisClient *redis.Client
-	db          *sqlx.DB
+type KafkaPostgresArchiver struct {
+	reader *kafka.Reader
+	writer *kafka.Writer // Used to emit bad payloads to the DLQ topic
+	db     *sqlx.DB
 }
 
-func NewPostgresArchiver(redisURL, postgresURL string) (*PostgresArchiver, error) {
-	rOpt, err := redis.ParseURL(redisURL)
-	if err != nil {
-		return nil, err
+func NewKafkaPostgresArchiver(brokerURL, postgresURL string) (*KafkaPostgresArchiver, error) {
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:  []string{brokerURL},
+		Topic:    repository.TelemetryTopic,
+		GroupID:  "polaris_archive_group",
+		MinBytes: 10e3, // 10KB
+		MaxBytes: 10e6, // 10MB
+	})
+
+	writer := &kafka.Writer{
+		Addr:     kafka.TCP(brokerURL),
+		Topic:    DeadLetterTopic,
+		Balancer: &kafka.Hash{},
 	}
-	redisClient := redis.NewClient(rOpt)
 
 	db, err := sqlx.Connect("postgres", postgresURL)
 	if err != nil {
 		return nil, err
 	}
 
-	redisClient.XGroupCreateMkStream(context.Background(), StreamName, "polaris_archive_group", "$")
-
-	return &PostgresArchiver{redisClient: redisClient, db: db}, nil
+	return &KafkaPostgresArchiver{reader: reader, writer: writer, db: db}, nil
 }
 
-func (a *PostgresArchiver) Start(ctx context.Context) {
-	slog.Info("Fault-Tolerant Time-Series Archiver Worker Started")
+func (a *KafkaPostgresArchiver) Start(ctx context.Context) {
+	slog.Info("Fault-Tolerant Kafka Time-Series Archiver Worker Active")
 
 	for {
 		select {
 		case <-ctx.Done():
+			a.reader.Close()
+			a.writer.Close()
 			return
 		default:
-			streams, err := a.redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
-				Group:    "polaris_archive_group",
-				Consumer: "archiver-node-1",
-				Streams:  []string{StreamName, ">"},
-				Count:    500,
-				Block:    5 * time.Second,
-			}).Result()
-
-			if err != nil || len(streams) == 0 {
+			// Fetch the raw binary data package from Kafka
+			msg, err := a.reader.ReadMessage(ctx)
+			if err != nil {
 				continue
 			}
 
-			// Individual message processing safeguards healthy records from batch crashes
-			for _, msg := range streams[0].Messages {
-				var p domain.TelemetryPayload
-				rawData := msg.Values["data"].(string)
+			// 1. Attempt binary parsing
+			var payload pb.SpatialObject
+			if err := proto.Unmarshal(msg.Value, &payload); err != nil {
+				slog.Warn("Failed parsing binary stream packet. Shifting to DLQ.")
+				a.sendToDLQ(ctx, msg.Key, msg.Value, "protobuf_unmarshal_failed")
+				continue
+			}
 
-				// 1. Unmarshal check
-				if err := json.Unmarshal([]byte(rawData), &p); err != nil {
-					slog.Warn("Malformed JSON caught. Shifting to DLQ.", "msg_id", msg.ID)
-					a.sendToDLQ(ctx, msg.ID, rawData, "json_unmarshal_failed")
-					a.redisClient.XAck(ctx, StreamName, "polaris_archive_group", msg.ID)
-					continue
-				}
+			// 2. Attempt relational long-term persistence execution
+			_, dbErr := a.db.ExecContext(ctx, `
+				INSERT INTO telemetry_history (tenant_id, node_id, asset_class, lat, lon, status, battery, recorded_at) 
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				payload.TenantId, payload.Id, int(payload.Type), payload.Lat, payload.Lon, string(payload.Status), payload.EnergyPercent, payload.Timestamp.AsTime(),
+			)
 
-				// 2. Individual Database Insert
-				_, dbErr := a.db.ExecContext(ctx, `
-					INSERT INTO telemetry_history (tenant_id, node_id, asset_class, lat, lon, status, battery, recorded_at) 
-					VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-					p.TenantID, p.NodeID, p.Class, p.Lat, p.Lon, p.Status, p.Battery, p.Timestamp,
-				)
-
-				// 3. Database constraint handling
-				if dbErr != nil {
-					slog.Error("Database constraint failure. Purging row to DLQ.", "node", p.NodeID, "error", dbErr)
-					a.sendToDLQ(ctx, msg.ID, rawData, dbErr.Error())
-					a.redisClient.XAck(ctx, StreamName, "polaris_archive_group", msg.ID)
-					continue
-				}
-
-				// 4. Confirm successful extraction to Redis pipeline
-				a.redisClient.XAck(ctx, StreamName, "polaris_archive_group", msg.ID)
+			// 3. If database constraints reject it, isolate and continue the group pipeline
+			if dbErr != nil {
+				slog.Error("Database constraint failure. Dropping packet to DLQ.", "node_id", payload.Id, "err", dbErr)
+				a.sendToDLQ(ctx, msg.Key, msg.Value, dbErr.Error())
+				continue
 			}
 		}
 	}
 }
 
-// sendToDLQ pushes failed events into a separate Redis stream for later debugging
-func (a *PostgresArchiver) sendToDLQ(ctx context.Context, sourceID string, payload string, reason string) {
-	_ = a.redisClient.XAdd(ctx, &redis.XAddArgs{
-		Stream: DeadLetterStreamKey,
-		MaxLen: 10000,
-		Approx: true,
-		Values: map[string]interface{}{
-			"original_message_id": sourceID,
-			"payload":             payload,
-			"failure_reason":      reason,
-			"failed_at":           time.Now().UTC().String(),
+func (a *KafkaPostgresArchiver) sendToDLQ(ctx context.Context, key []byte, value []byte, reason string) {
+	_ = a.writer.WriteMessages(ctx, kafka.Message{
+		Key:   key,
+		Value: value,
+		Headers: []kafka.Header{
+			{Key: "error_reason", Value: []byte(reason)},
+			{Key: "failed_at", Value: []byte(time.Now().UTC().String())},
 		},
-	}).Err()
+	})
 }

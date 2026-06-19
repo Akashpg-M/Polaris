@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/Akashpg-M/polaris/internal/application/spatial"
-	"github.com/Akashpg-M/polaris/internal/core/ports"
+	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
+	"github.com/Akashpg-M/polaris/backend/internal/core/ports"
 )
 
 // 1. THE GENERALIZED DOMAIN MODELS

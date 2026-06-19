@@ -2,7 +2,7 @@ package orchestrator
 
 import (
 	"context"
-	"github.com/Akashpg-M/polaris/internal/core/domain"
+	"github.com/Akashpg-M/polaris/backend/internal/core/domain"
 )
 
 // StaticZoneStrategy simulates a database table of logistics hubs or smart-city sectors

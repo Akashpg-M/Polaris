@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package polaris.spatial.v1;
+
+// This defines the output path for the generated Go code
+option go_package = "github.com/Akashpg-M/polaris/v3.0/backend/api/proto/v1;v1";
+
+import "google/protobuf/timestamp.proto";
+
+
+// 1. Hardware Polymorphism
+enum NodeType {
+  NODE_TYPE_UNSPECIFIED = 0;
+  NODE_TYPE_VEHICLE = 1;
+  NODE_TYPE_DRONE = 2;
+  NODE_TYPE_TRAFFIC_SIGNAL = 3;
+  NODE_TYPE_AMBULANCE = 4;
+  NODE_TYPE_EV_CHARGER = 5;
+  NODE_TYPE_STATIC_SENSOR = 6;
+}
+
+// 2. Universal State Machine
+enum NodeStatus {
+  NODE_STATUS_UNSPECIFIED = 0;
+  NODE_STATUS_IDLE = 1;
+  NODE_STATUS_ACTIVE = 2;
+  NODE_STATUS_EMERGENCY = 3;
+  NODE_STATUS_FAULTED = 4;
+  NODE_STATUS_OFFLINE = 5;
+}
+
+// 3. The Universal Digital Twin Payload
+message SpatialObject {
+  string id = 1;
+  string tenant_id = 2;
+  NodeType type = 3;
+  NodeStatus status = 4;
+
+  // 3D Kinematics (The Math Core)
+  double lat = 5;
+  double lon = 6;
+  double altitude = 7;      // Essential for Drone flight corridors
+  float velocity_mps = 8;
+  float heading_deg = 9;
+
+  // Capabilities & Resource Core
+  uint32 energy_percent = 10;
+  uint32 priority_level = 11; // High priority (99) overrides traffic signals
+
+  // Extensible Data (Hardware-specific payloads like camera metadata or temperature)
+  map<string, string> metadata = 12;
+
+  google.protobuf.Timestamp timestamp = 13;
+}

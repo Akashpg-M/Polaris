@@ -2,10 +2,10 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"github.com/Akashpg-M/polaris/internal/core/domain"
+	"github.com/Akashpg-M/polaris/backend/internal/core/domain/pb"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/proto"
 )
 
 const TelemetryStreamKey = "telemetry:ingress"
@@ -30,28 +30,21 @@ func NewRedisStreamAdapter(redisURL string) (*RedisStreamAdapter, error) {
 	return &RedisStreamAdapter{client: client}, nil
 }
 
-// Publish implements ports.TelemetryPublisher using Redis XADD
-func (r *RedisStreamAdapter) Publish(ctx context.Context, payload domain.TelemetryPayload) error {
-	// Serialize the payload to standard JSON
-	data, err := json.Marshal(payload)
+func (r *RedisStreamAdapter) Publish(ctx context.Context, payload *pb.SpatialObject) error {
+	// 1. Serialize to ultra-compact binary byte array
+	data, err := proto.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to serialize telemetry: %w", err)
+		return fmt.Errorf("protobuf marshal failed: %w", err)
 	}
 
-	// XADD pushes the event to the Redis Stream. 
-	// MaxLen limits the stream size to 100,000 to prevent OOM (Out Of Memory) crashes if consumers die.
 	err = r.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: TelemetryStreamKey,
 		MaxLen: 100000, 
 		Approx: true,
 		Values: map[string]interface{}{
-			"data": string(data),
+			"data": data, // Store raw bytes in Redis
 		},
 	}).Err()
 
-	if err != nil {
-		return fmt.Errorf("redis stream xadd failed: %w", err)
-	}
-
-	return nil
+	return err
 }
