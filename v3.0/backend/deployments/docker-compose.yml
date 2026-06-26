@@ -1,37 +1,61 @@
-services:
-  # 1. THE MESSAGE BROKER & SHOCK ABSORBER
-  redis:
-    image: redis:7-alpine
-    container_name: polaris_redis_v3
-    ports:
-      - "6379:6379"
-    command: ["redis-server", "--appendonly", "yes"] # Ensures stream data isn't lost on restart
+# services:
+#   # 1. THE MESSAGE BROKER & SHOCK ABSORBER
+#   redis:
+#     image: redis:7-alpine
+#     container_name: polaris_redis_v3
+#     ports:
+#       - "6379:6379"
+#     command: ["redis-server", "--appendonly", "yes"] # Ensures stream data isn't lost on restart
 
-  # 2. THE PERMANENT LEDGER
-  postgres:
-    image: postgis/postgis:16-3.4                             # PostGIS for future advanced spatial queries
-    container_name: polaris_db_v3
-    environment:
-      POSTGRES_USER: polaris_user
-      POSTGRES_PASSWORD: polaris_password
-      POSTGRES_DB: polaris_core
-    ports:
-      - "5432:5432"
-    volumes:
-      - polaris_pg_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql # Auto-runs schema on first boot
+#   # 2. THE PERMANENT LEDGER
+#   postgres:
+#     image: postgis/postgis:16-3.4                             # PostGIS for future advanced spatial queries
+#     container_name: polaris_db_v3
+#     environment:
+#       POSTGRES_USER: polaris_user
+#       POSTGRES_PASSWORD: polaris_password
+#       POSTGRES_DB: polaris_core
+#     ports:
+#       - "5432:5432"
+#     volumes:
+#       - polaris_pg_data:/var/lib/postgresql/data
+#       - ./init.sql:/docker-entrypoint-initdb.d/init.sql # Auto-runs schema on first boot
 
-  # 3. THE LOCAL ROUTING ENGINE
-  osrm:
-    image: osrm/osrm-backend
-    container_name: polaris_osrm_v3
-    ports:
-      - "5000:5000"
-    command: osrm-routed --algorithm mld /data/chennai-metro.osrm
-    volumes:
-      - ../../../chennai_map:/data
+#   # 3. THE LOCAL ROUTING ENGINE
+#   osrm:
+#     image: osrm/osrm-backend
+#     container_name: polaris_osrm_v3
+#     ports:
+#       - "5000:5000"
+#     command: osrm-routed --algorithm mld /data/chennai-metro.osrm
+#     volumes:
+#       - ../../../chennai_map:/data
   
+#   # Redpanda: Ultra-fast Kafka Compatible Event Streaming Platform
+#   redpanda:
+#     image: docker.redpanda.com/redpandadata/redpanda:latest
+#     container_name: polaris_kafka_v3
+#     command:
+#       - redpanda start
+#       - --smp 1
+#       - --reserve-memory 0M
+#       - --overprovisioned
+#       - --node-id 0
+#       - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+#       - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+#     ports:
+#       - "9092:9092"
+#       - "9644:9644"
+
+# volumes:
+#   polaris_pg_data:
+
+version: '3.8'
+
+services:
+  # 1. THE EVENT FABRIC (INGRESS)
   # Redpanda: Ultra-fast Kafka Compatible Event Streaming Platform
+  # Handles the 3,000+ pings/sec telemetry ingestion via H3 Geohash partitioning.
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:latest
     container_name: polaris_kafka_v3
@@ -46,6 +70,34 @@ services:
     ports:
       - "9092:9092"
       - "9644:9644"
+
+  # 2. THE COMMAND ROUTER (EGRESS)
+  # Redis is now ONLY used for lightweight, sub-millisecond Pub/Sub to push 
+  # relocation commands from the Engine back to the Edge WebSockets.
+  redis:
+    image: redis:7-alpine
+    container_name: polaris_redis_v3
+    ports:
+      - "6379:6379"
+    # Note: Removed appendonly=yes because Pub/Sub is transient. 
+    # We no longer need Redis to save state to disk!
+    command: ["redis-server"] 
+
+  # 3. THE PERMANENT LEDGER (COLD STORAGE)
+  # Consumes data asynchronously from Kafka via the Archiver worker.
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: polaris_db_v3
+    environment:
+      POSTGRES_USER: polaris_user
+      POSTGRES_PASSWORD: polaris_password
+      POSTGRES_DB: polaris_core
+    ports:
+      - "5432:5432"
+    volumes:
+      - polaris_pg_data:/var/lib/postgresql/data
+      # Ensure your init.sql is updated to support the new pb.SpatialObject schema!
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql 
 
 volumes:
   polaris_pg_data:

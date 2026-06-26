@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/Akashpg-M/polaris/internal/application/spatial"
-	"github.com/Akashpg-M/polaris/internal/core/domain/pb"
+	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
+	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/protobuf/proto"
 )

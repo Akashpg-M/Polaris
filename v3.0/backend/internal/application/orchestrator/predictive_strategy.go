@@ -5,7 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"github.com/jmoiron/sqlx"
-	"github.com/Akashpg-M/polaris/backend/internal/core/domain"
+	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 )
 
 // PredictiveZoneStrategy uses historical spatial clustering to predict demand
@@ -59,7 +59,7 @@ func (s *PredictiveZoneStrategy) GetTargetZones(ctx context.Context) []Zone {
 				Lon:            lon,
 				RadiusKm:       2.0, // Create a 2km radius catch-zone
 				RequiredAssets: 5,   // Require 5 drones to pre-position here
-				TargetClass:    uint16(domain.ClassDrone),
+				TargetClass:    pb.NodeType_NODE_TYPE_DRONE,
 				TenantID:       "alpha_logistics",
 			})
 			hubIndex++

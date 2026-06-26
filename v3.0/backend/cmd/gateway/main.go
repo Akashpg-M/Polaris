@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"	
+	"time"
 
 	"github.com/Akashpg-M/polaris/backend/algo_/logger"
 	"github.com/Akashpg-M/polaris/backend/internal/adapter/handler"
@@ -23,30 +23,44 @@ func main() {
 	logger.Init()
 	slog.Info("Booting Polaris v3.0 API Gateway...")
 
-	// redisAdapter, err := repository.NewRedisStreamAdapter(cfg.Redis.URL)
-	// if err != nil {
-	// 	slog.Error("System halted: Failed to connect to Redis", "error", err)
-	// 	os.Exit(1)
-	// }
-
 	kafkaBroker := getEnvFallback("KAFKA_BROKER_URL", "localhost:9092")
 	kafkaAdapter := repository.NewKafkaStreamAdapter(kafkaBroker)
 	defer kafkaAdapter.Close()
 
+	// 1. Initialized Registries
 	registry := handler.NewConnectionRegistry()
+	dashboardRegistry := handler.NewDashboardRegistry() // FIXED
+
+	// 2. Start Background Async Topic Consumers
 	go startCommandSubscriber(cfg.Redis.URL, registry)
+	go startDashboardSubscriber(cfg.Redis.URL, dashboardRegistry) // FIXED
 
 	gin.SetMode(gin.ReleaseMode)
+
 	router := gin.New()
 	router.Use(gin.Recovery())
 
 	router.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Next()
+    c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+    c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+    
+    // Handle preflight OPTIONS requests instantly
+    if c.Request.Method == "OPTIONS" {
+        c.AbortWithStatus(200)
+        return
+    }
+    c.Next()
 	})
-
+	// 3. Wired Handlers
 	ingestionHandler := handler.NewIngestionHandler(kafkaAdapter, registry)
+	dashboardHandler := handler.NewDashboardHandler(dashboardRegistry) // FIXED
+
+	// Ingress endpoint (Binary inputs from edge hardware devices)
 	router.GET("/ws/telemetry", ingestionHandler.HandleIoTConnection)
+
+	// Egress streaming endpoint (JSON outputs out to browser tracking dashboards)
+	router.GET("/ws/dashboard", dashboardHandler.HandleWebConnection) // FIXED
 
 	api := router.Group("/api/v1")
 	{
@@ -93,6 +107,18 @@ func startCommandSubscriber(redisURL string, registry *handler.ConnectionRegistr
 		if err := json.Unmarshal([]byte(msg.Payload), &payload); err == nil {
 			registry.SendCommand(payload.NodeID, payload.Command)
 		}
+	}
+}
+
+func startDashboardSubscriber(redisURL string, dashboardRegistry *handler.DashboardRegistry) {
+	opts, _ := redis.ParseURL(redisURL)
+	client := redis.NewClient(opts)
+	pubsub := client.Subscribe(context.Background(), "spatial:updates")
+	defer pubsub.Close()
+
+	for msg := range pubsub.Channel() {
+		// Broadcast the JSON string instantly to all open web dashboard browsers
+		dashboardRegistry.BroadcastToUIs(msg.Payload)
 	}
 }
 

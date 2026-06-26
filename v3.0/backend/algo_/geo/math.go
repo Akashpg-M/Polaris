@@ -32,3 +32,27 @@ func BoundingBox(lat, lon, radiusKm float64) (x, y, width, height float64) {
 
 	return x, y, width, height
 }
+
+// ProjectCoordinate calculates a destination Lat/Lon given a starting point, heading, and distance.
+func ProjectCoordinate(lat, lon, headingDeg, distanceKm float64) (float64, float64) {
+	// Convert degrees to radians
+	latRad := lat * math.Pi / 180.0
+	lonRad := lon * math.Pi / 180.0
+	headingRad := headingDeg * math.Pi / 180.0
+
+	angularDistance := distanceKm / EarthRadiusKm
+
+	// Calculate the new latitude
+	newLatRad := math.Asin(math.Sin(latRad)*math.Cos(angularDistance) +
+		math.Cos(latRad)*math.Sin(angularDistance)*math.Cos(headingRad))
+
+	// Calculate the new longitude
+	newLonRad := lonRad + math.Atan2(math.Sin(headingRad)*math.Sin(angularDistance)*math.Cos(latRad),
+		math.Cos(angularDistance)-math.Sin(latRad)*math.Sin(newLatRad))
+
+	// Convert back to degrees
+	newLat := newLatRad * 180.0 / math.Pi
+	newLon := newLonRad * 180.0 / math.Pi
+
+	return newLat, newLon
+}

@@ -2,7 +2,7 @@ package orchestrator
 
 import (
 	"context"
-	"github.com/Akashpg-M/polaris/backend/internal/core/domain"
+	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 )
 
 // StaticZoneStrategy simulates a database table of logistics hubs or smart-city sectors
@@ -16,8 +16,8 @@ func (s *StaticZoneStrategy) GetTargetZones(ctx context.Context) []Zone {
 			Lon:            80.2206,
 			RadiusKm:       5.0,
 			RequiredAssets: 3,
-			TargetClass:    uint16(domain.ClassDrone),
-            TenantID:       "alpha_logistics",
+			TargetClass:    pb.NodeType_NODE_TYPE_DRONE,
+      TenantID:       "alpha_logistics",
 		},
 		{
 			ID:             "Hub-Adyar",
@@ -25,8 +25,8 @@ func (s *StaticZoneStrategy) GetTargetZones(ctx context.Context) []Zone {
 			Lon:            80.2565,
 			RadiusKm:       3.0,
 			RequiredAssets: 2,
-			TargetClass:    uint16(domain.ClassDrone),
-            TenantID:       "alpha_logistics",
+			TargetClass:    pb.NodeType_NODE_TYPE_DRONE,
+      TenantID:       "alpha_logistics",
 		},
 	}
 }

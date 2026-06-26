@@ -2,14 +2,13 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.35.0
-// source: backend/api/proto/v1/spatial.proto
+// source: api/proto/v1/spatial.proto
 
 package v1
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -22,38 +21,40 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// 1. Hardware Polymorphism
 type NodeType int32
 
 const (
-	NodeType_NODE_TYPE_UNSPECIFIED    NodeType = 0
-	NodeType_NODE_TYPE_VEHICLE        NodeType = 1
-	NodeType_NODE_TYPE_DRONE          NodeType = 2
-	NodeType_NODE_TYPE_TRAFFIC_SIGNAL NodeType = 3
-	NodeType_NODE_TYPE_AMBULANCE      NodeType = 4
-	NodeType_NODE_TYPE_EV_CHARGER     NodeType = 5
-	NodeType_NODE_TYPE_STATIC_SENSOR  NodeType = 6
+	NodeType_NODE_TYPE_UNKNOWN       NodeType = 0
+	NodeType_NODE_TYPE_BIKE          NodeType = 1
+	NodeType_NODE_TYPE_AUTO          NodeType = 2
+	NodeType_NODE_TYPE_SEDAN         NodeType = 3
+	NodeType_NODE_TYPE_SUV           NodeType = 4
+	NodeType_NODE_TYPE_DRONE         NodeType = 5
+	NodeType_NODE_TYPE_ROBOT         NodeType = 6
+	NodeType_NODE_TYPE_STATIC_SENSOR NodeType = 7
 )
 
 // Enum value maps for NodeType.
 var (
 	NodeType_name = map[int32]string{
-		0: "NODE_TYPE_UNSPECIFIED",
-		1: "NODE_TYPE_VEHICLE",
-		2: "NODE_TYPE_DRONE",
-		3: "NODE_TYPE_TRAFFIC_SIGNAL",
-		4: "NODE_TYPE_AMBULANCE",
-		5: "NODE_TYPE_EV_CHARGER",
-		6: "NODE_TYPE_STATIC_SENSOR",
+		0: "NODE_TYPE_UNKNOWN",
+		1: "NODE_TYPE_BIKE",
+		2: "NODE_TYPE_AUTO",
+		3: "NODE_TYPE_SEDAN",
+		4: "NODE_TYPE_SUV",
+		5: "NODE_TYPE_DRONE",
+		6: "NODE_TYPE_ROBOT",
+		7: "NODE_TYPE_STATIC_SENSOR",
 	}
 	NodeType_value = map[string]int32{
-		"NODE_TYPE_UNSPECIFIED":    0,
-		"NODE_TYPE_VEHICLE":        1,
-		"NODE_TYPE_DRONE":          2,
-		"NODE_TYPE_TRAFFIC_SIGNAL": 3,
-		"NODE_TYPE_AMBULANCE":      4,
-		"NODE_TYPE_EV_CHARGER":     5,
-		"NODE_TYPE_STATIC_SENSOR":  6,
+		"NODE_TYPE_UNKNOWN":       0,
+		"NODE_TYPE_BIKE":          1,
+		"NODE_TYPE_AUTO":          2,
+		"NODE_TYPE_SEDAN":         3,
+		"NODE_TYPE_SUV":           4,
+		"NODE_TYPE_DRONE":         5,
+		"NODE_TYPE_ROBOT":         6,
+		"NODE_TYPE_STATIC_SENSOR": 7,
 	}
 )
 
@@ -68,11 +69,11 @@ func (x NodeType) String() string {
 }
 
 func (NodeType) Descriptor() protoreflect.EnumDescriptor {
-	return file_backend_api_proto_v1_spatial_proto_enumTypes[0].Descriptor()
+	return file_api_proto_v1_spatial_proto_enumTypes[0].Descriptor()
 }
 
 func (NodeType) Type() protoreflect.EnumType {
-	return &file_backend_api_proto_v1_spatial_proto_enumTypes[0]
+	return &file_api_proto_v1_spatial_proto_enumTypes[0]
 }
 
 func (x NodeType) Number() protoreflect.EnumNumber {
@@ -81,37 +82,36 @@ func (x NodeType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use NodeType.Descriptor instead.
 func (NodeType) EnumDescriptor() ([]byte, []int) {
-	return file_backend_api_proto_v1_spatial_proto_rawDescGZIP(), []int{0}
+	return file_api_proto_v1_spatial_proto_rawDescGZIP(), []int{0}
 }
 
-// 2. Universal State Machine
 type NodeStatus int32
 
 const (
-	NodeStatus_NODE_STATUS_UNSPECIFIED NodeStatus = 0
+	NodeStatus_NODE_STATUS_UNKNOWN     NodeStatus = 0
 	NodeStatus_NODE_STATUS_IDLE        NodeStatus = 1
-	NodeStatus_NODE_STATUS_ACTIVE      NodeStatus = 2
-	NodeStatus_NODE_STATUS_EMERGENCY   NodeStatus = 3
-	NodeStatus_NODE_STATUS_FAULTED     NodeStatus = 4
+	NodeStatus_NODE_STATUS_EN_ROUTE    NodeStatus = 2
+	NodeStatus_NODE_STATUS_ACTIVE      NodeStatus = 3
+	NodeStatus_NODE_STATUS_MAINTENANCE NodeStatus = 4
 	NodeStatus_NODE_STATUS_OFFLINE     NodeStatus = 5
 )
 
 // Enum value maps for NodeStatus.
 var (
 	NodeStatus_name = map[int32]string{
-		0: "NODE_STATUS_UNSPECIFIED",
+		0: "NODE_STATUS_UNKNOWN",
 		1: "NODE_STATUS_IDLE",
-		2: "NODE_STATUS_ACTIVE",
-		3: "NODE_STATUS_EMERGENCY",
-		4: "NODE_STATUS_FAULTED",
+		2: "NODE_STATUS_EN_ROUTE",
+		3: "NODE_STATUS_ACTIVE",
+		4: "NODE_STATUS_MAINTENANCE",
 		5: "NODE_STATUS_OFFLINE",
 	}
 	NodeStatus_value = map[string]int32{
-		"NODE_STATUS_UNSPECIFIED": 0,
+		"NODE_STATUS_UNKNOWN":     0,
 		"NODE_STATUS_IDLE":        1,
-		"NODE_STATUS_ACTIVE":      2,
-		"NODE_STATUS_EMERGENCY":   3,
-		"NODE_STATUS_FAULTED":     4,
+		"NODE_STATUS_EN_ROUTE":    2,
+		"NODE_STATUS_ACTIVE":      3,
+		"NODE_STATUS_MAINTENANCE": 4,
 		"NODE_STATUS_OFFLINE":     5,
 	}
 )
@@ -127,11 +127,11 @@ func (x NodeStatus) String() string {
 }
 
 func (NodeStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_backend_api_proto_v1_spatial_proto_enumTypes[1].Descriptor()
+	return file_api_proto_v1_spatial_proto_enumTypes[1].Descriptor()
 }
 
 func (NodeStatus) Type() protoreflect.EnumType {
-	return &file_backend_api_proto_v1_spatial_proto_enumTypes[1]
+	return &file_api_proto_v1_spatial_proto_enumTypes[1]
 }
 
 func (x NodeStatus) Number() protoreflect.EnumNumber {
@@ -140,35 +140,29 @@ func (x NodeStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use NodeStatus.Descriptor instead.
 func (NodeStatus) EnumDescriptor() ([]byte, []int) {
-	return file_backend_api_proto_v1_spatial_proto_rawDescGZIP(), []int{1}
+	return file_api_proto_v1_spatial_proto_rawDescGZIP(), []int{1}
 }
 
-// 3. The Universal Digital Twin Payload
 type SpatialObject struct {
-	state    protoimpl.MessageState `protogen:"open.v1"`
-	Id       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	TenantId string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	Type     NodeType               `protobuf:"varint,3,opt,name=type,proto3,enum=polaris.spatial.v1.NodeType" json:"type,omitempty"`
-	Status   NodeStatus             `protobuf:"varint,4,opt,name=status,proto3,enum=polaris.spatial.v1.NodeStatus" json:"status,omitempty"`
-	// 3D Kinematics (The Math Core)
-	Lat         float64 `protobuf:"fixed64,5,opt,name=lat,proto3" json:"lat,omitempty"`
-	Lon         float64 `protobuf:"fixed64,6,opt,name=lon,proto3" json:"lon,omitempty"`
-	Altitude    float64 `protobuf:"fixed64,7,opt,name=altitude,proto3" json:"altitude,omitempty"` // Essential for Drone flight corridors
-	VelocityMps float32 `protobuf:"fixed32,8,opt,name=velocity_mps,json=velocityMps,proto3" json:"velocity_mps,omitempty"`
-	HeadingDeg  float32 `protobuf:"fixed32,9,opt,name=heading_deg,json=headingDeg,proto3" json:"heading_deg,omitempty"`
-	// Capabilities & Resource Core
-	EnergyPercent uint32 `protobuf:"varint,10,opt,name=energy_percent,json=energyPercent,proto3" json:"energy_percent,omitempty"`
-	PriorityLevel uint32 `protobuf:"varint,11,opt,name=priority_level,json=priorityLevel,proto3" json:"priority_level,omitempty"` // High priority (99) overrides traffic signals
-	// Extensible Data (Hardware-specific payloads like camera metadata or temperature)
-	Metadata      map[string]string      `protobuf:"bytes,12,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	TenantId    string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Type        NodeType               `protobuf:"varint,3,opt,name=type,proto3,enum=polaris.spatial.v1.NodeType" json:"type,omitempty"`
+	Status      NodeStatus             `protobuf:"varint,4,opt,name=status,proto3,enum=polaris.spatial.v1.NodeStatus" json:"status,omitempty"`
+	Lat         float64                `protobuf:"fixed64,5,opt,name=lat,proto3" json:"lat,omitempty"`
+	Lon         float64                `protobuf:"fixed64,6,opt,name=lon,proto3" json:"lon,omitempty"`
+	VelocityMps float32                `protobuf:"fixed32,7,opt,name=velocity_mps,json=velocityMps,proto3" json:"velocity_mps,omitempty"`
+	HeadingDeg  float32                `protobuf:"fixed32,8,opt,name=heading_deg,json=headingDeg,proto3" json:"heading_deg,omitempty"`
+	// ---> FIXED FIELDS TO MATCH YOUR CODE <---
+	EnergyPercent int32 `protobuf:"varint,9,opt,name=energy_percent,json=energyPercent,proto3" json:"energy_percent,omitempty"` // Generates as .EnergyPercent in Go
+	Timestamp     int64 `protobuf:"varint,10,opt,name=timestamp,proto3" json:"timestamp,omitempty"`                             // Generates as .Timestamp in Go (Unix Milliseconds/Seconds)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SpatialObject) Reset() {
 	*x = SpatialObject{}
-	mi := &file_backend_api_proto_v1_spatial_proto_msgTypes[0]
+	mi := &file_api_proto_v1_spatial_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -180,7 +174,7 @@ func (x *SpatialObject) String() string {
 func (*SpatialObject) ProtoMessage() {}
 
 func (x *SpatialObject) ProtoReflect() protoreflect.Message {
-	mi := &file_backend_api_proto_v1_spatial_proto_msgTypes[0]
+	mi := &file_api_proto_v1_spatial_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -193,7 +187,7 @@ func (x *SpatialObject) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpatialObject.ProtoReflect.Descriptor instead.
 func (*SpatialObject) Descriptor() ([]byte, []int) {
-	return file_backend_api_proto_v1_spatial_proto_rawDescGZIP(), []int{0}
+	return file_api_proto_v1_spatial_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *SpatialObject) GetId() string {
@@ -214,14 +208,14 @@ func (x *SpatialObject) GetType() NodeType {
 	if x != nil {
 		return x.Type
 	}
-	return NodeType_NODE_TYPE_UNSPECIFIED
+	return NodeType_NODE_TYPE_UNKNOWN
 }
 
 func (x *SpatialObject) GetStatus() NodeStatus {
 	if x != nil {
 		return x.Status
 	}
-	return NodeStatus_NODE_STATUS_UNSPECIFIED
+	return NodeStatus_NODE_STATUS_UNKNOWN
 }
 
 func (x *SpatialObject) GetLat() float64 {
@@ -234,13 +228,6 @@ func (x *SpatialObject) GetLat() float64 {
 func (x *SpatialObject) GetLon() float64 {
 	if x != nil {
 		return x.Lon
-	}
-	return 0
-}
-
-func (x *SpatialObject) GetAltitude() float64 {
-	if x != nil {
-		return x.Altitude
 	}
 	return 0
 }
@@ -259,129 +246,106 @@ func (x *SpatialObject) GetHeadingDeg() float32 {
 	return 0
 }
 
-func (x *SpatialObject) GetEnergyPercent() uint32 {
+func (x *SpatialObject) GetEnergyPercent() int32 {
 	if x != nil {
 		return x.EnergyPercent
 	}
 	return 0
 }
 
-func (x *SpatialObject) GetPriorityLevel() uint32 {
+func (x *SpatialObject) GetTimestamp() int64 {
 	if x != nil {
-		return x.PriorityLevel
+		return x.Timestamp
 	}
 	return 0
 }
 
-func (x *SpatialObject) GetMetadata() map[string]string {
-	if x != nil {
-		return x.Metadata
-	}
-	return nil
-}
+var File_api_proto_v1_spatial_proto protoreflect.FileDescriptor
 
-func (x *SpatialObject) GetTimestamp() *timestamppb.Timestamp {
-	if x != nil {
-		return x.Timestamp
-	}
-	return nil
-}
-
-var File_backend_api_proto_v1_spatial_proto protoreflect.FileDescriptor
-
-const file_backend_api_proto_v1_spatial_proto_rawDesc = "" +
+const file_api_proto_v1_spatial_proto_rawDesc = "" +
 	"\n" +
-	"\"backend/api/proto/v1/spatial.proto\x12\x12polaris.spatial.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xbc\x04\n" +
+	"\x1aapi/proto/v1/spatial.proto\x12\x12polaris.spatial.v1\"\xd3\x02\n" +
 	"\rSpatialObject\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x120\n" +
 	"\x04type\x18\x03 \x01(\x0e2\x1c.polaris.spatial.v1.NodeTypeR\x04type\x126\n" +
 	"\x06status\x18\x04 \x01(\x0e2\x1e.polaris.spatial.v1.NodeStatusR\x06status\x12\x10\n" +
 	"\x03lat\x18\x05 \x01(\x01R\x03lat\x12\x10\n" +
-	"\x03lon\x18\x06 \x01(\x01R\x03lon\x12\x1a\n" +
-	"\baltitude\x18\a \x01(\x01R\baltitude\x12!\n" +
-	"\fvelocity_mps\x18\b \x01(\x02R\vvelocityMps\x12\x1f\n" +
-	"\vheading_deg\x18\t \x01(\x02R\n" +
+	"\x03lon\x18\x06 \x01(\x01R\x03lon\x12!\n" +
+	"\fvelocity_mps\x18\a \x01(\x02R\vvelocityMps\x12\x1f\n" +
+	"\vheading_deg\x18\b \x01(\x02R\n" +
 	"headingDeg\x12%\n" +
-	"\x0eenergy_percent\x18\n" +
-	" \x01(\rR\renergyPercent\x12%\n" +
-	"\x0epriority_level\x18\v \x01(\rR\rpriorityLevel\x12K\n" +
-	"\bmetadata\x18\f \x03(\v2/.polaris.spatial.v1.SpatialObject.MetadataEntryR\bmetadata\x128\n" +
-	"\ttimestamp\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x1a;\n" +
-	"\rMetadataEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01*\xbf\x01\n" +
-	"\bNodeType\x12\x19\n" +
-	"\x15NODE_TYPE_UNSPECIFIED\x10\x00\x12\x15\n" +
-	"\x11NODE_TYPE_VEHICLE\x10\x01\x12\x13\n" +
-	"\x0fNODE_TYPE_DRONE\x10\x02\x12\x1c\n" +
-	"\x18NODE_TYPE_TRAFFIC_SIGNAL\x10\x03\x12\x17\n" +
-	"\x13NODE_TYPE_AMBULANCE\x10\x04\x12\x18\n" +
-	"\x14NODE_TYPE_EV_CHARGER\x10\x05\x12\x1b\n" +
-	"\x17NODE_TYPE_STATIC_SENSOR\x10\x06*\xa4\x01\n" +
+	"\x0eenergy_percent\x18\t \x01(\x05R\renergyPercent\x12\x1c\n" +
+	"\ttimestamp\x18\n" +
+	" \x01(\x03R\ttimestamp*\xb8\x01\n" +
+	"\bNodeType\x12\x15\n" +
+	"\x11NODE_TYPE_UNKNOWN\x10\x00\x12\x12\n" +
+	"\x0eNODE_TYPE_BIKE\x10\x01\x12\x12\n" +
+	"\x0eNODE_TYPE_AUTO\x10\x02\x12\x13\n" +
+	"\x0fNODE_TYPE_SEDAN\x10\x03\x12\x11\n" +
+	"\rNODE_TYPE_SUV\x10\x04\x12\x13\n" +
+	"\x0fNODE_TYPE_DRONE\x10\x05\x12\x13\n" +
+	"\x0fNODE_TYPE_ROBOT\x10\x06\x12\x1b\n" +
+	"\x17NODE_TYPE_STATIC_SENSOR\x10\a*\xa3\x01\n" +
 	"\n" +
-	"NodeStatus\x12\x1b\n" +
-	"\x17NODE_STATUS_UNSPECIFIED\x10\x00\x12\x14\n" +
-	"\x10NODE_STATUS_IDLE\x10\x01\x12\x16\n" +
-	"\x12NODE_STATUS_ACTIVE\x10\x02\x12\x19\n" +
-	"\x15NODE_STATUS_EMERGENCY\x10\x03\x12\x17\n" +
-	"\x13NODE_STATUS_FAULTED\x10\x04\x12\x17\n" +
+	"NodeStatus\x12\x17\n" +
+	"\x13NODE_STATUS_UNKNOWN\x10\x00\x12\x14\n" +
+	"\x10NODE_STATUS_IDLE\x10\x01\x12\x18\n" +
+	"\x14NODE_STATUS_EN_ROUTE\x10\x02\x12\x16\n" +
+	"\x12NODE_STATUS_ACTIVE\x10\x03\x12\x1b\n" +
+	"\x17NODE_STATUS_MAINTENANCE\x10\x04\x12\x17\n" +
 	"\x13NODE_STATUS_OFFLINE\x10\x05B;Z9github.com/Akashpg-M/polaris/v3.0/backend/api/proto/v1;v1b\x06proto3"
 
 var (
-	file_backend_api_proto_v1_spatial_proto_rawDescOnce sync.Once
-	file_backend_api_proto_v1_spatial_proto_rawDescData []byte
+	file_api_proto_v1_spatial_proto_rawDescOnce sync.Once
+	file_api_proto_v1_spatial_proto_rawDescData []byte
 )
 
-func file_backend_api_proto_v1_spatial_proto_rawDescGZIP() []byte {
-	file_backend_api_proto_v1_spatial_proto_rawDescOnce.Do(func() {
-		file_backend_api_proto_v1_spatial_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_backend_api_proto_v1_spatial_proto_rawDesc), len(file_backend_api_proto_v1_spatial_proto_rawDesc)))
+func file_api_proto_v1_spatial_proto_rawDescGZIP() []byte {
+	file_api_proto_v1_spatial_proto_rawDescOnce.Do(func() {
+		file_api_proto_v1_spatial_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_api_proto_v1_spatial_proto_rawDesc), len(file_api_proto_v1_spatial_proto_rawDesc)))
 	})
-	return file_backend_api_proto_v1_spatial_proto_rawDescData
+	return file_api_proto_v1_spatial_proto_rawDescData
 }
 
-var file_backend_api_proto_v1_spatial_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_backend_api_proto_v1_spatial_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_backend_api_proto_v1_spatial_proto_goTypes = []any{
-	(NodeType)(0),                 // 0: polaris.spatial.v1.NodeType
-	(NodeStatus)(0),               // 1: polaris.spatial.v1.NodeStatus
-	(*SpatialObject)(nil),         // 2: polaris.spatial.v1.SpatialObject
-	nil,                           // 3: polaris.spatial.v1.SpatialObject.MetadataEntry
-	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
+var file_api_proto_v1_spatial_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_api_proto_v1_spatial_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_api_proto_v1_spatial_proto_goTypes = []any{
+	(NodeType)(0),         // 0: polaris.spatial.v1.NodeType
+	(NodeStatus)(0),       // 1: polaris.spatial.v1.NodeStatus
+	(*SpatialObject)(nil), // 2: polaris.spatial.v1.SpatialObject
 }
-var file_backend_api_proto_v1_spatial_proto_depIdxs = []int32{
+var file_api_proto_v1_spatial_proto_depIdxs = []int32{
 	0, // 0: polaris.spatial.v1.SpatialObject.type:type_name -> polaris.spatial.v1.NodeType
 	1, // 1: polaris.spatial.v1.SpatialObject.status:type_name -> polaris.spatial.v1.NodeStatus
-	3, // 2: polaris.spatial.v1.SpatialObject.metadata:type_name -> polaris.spatial.v1.SpatialObject.MetadataEntry
-	4, // 3: polaris.spatial.v1.SpatialObject.timestamp:type_name -> google.protobuf.Timestamp
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
-func init() { file_backend_api_proto_v1_spatial_proto_init() }
-func file_backend_api_proto_v1_spatial_proto_init() {
-	if File_backend_api_proto_v1_spatial_proto != nil {
+func init() { file_api_proto_v1_spatial_proto_init() }
+func file_api_proto_v1_spatial_proto_init() {
+	if File_api_proto_v1_spatial_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_backend_api_proto_v1_spatial_proto_rawDesc), len(file_backend_api_proto_v1_spatial_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_v1_spatial_proto_rawDesc), len(file_api_proto_v1_spatial_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   2,
+			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_backend_api_proto_v1_spatial_proto_goTypes,
-		DependencyIndexes: file_backend_api_proto_v1_spatial_proto_depIdxs,
-		EnumInfos:         file_backend_api_proto_v1_spatial_proto_enumTypes,
-		MessageInfos:      file_backend_api_proto_v1_spatial_proto_msgTypes,
+		GoTypes:           file_api_proto_v1_spatial_proto_goTypes,
+		DependencyIndexes: file_api_proto_v1_spatial_proto_depIdxs,
+		EnumInfos:         file_api_proto_v1_spatial_proto_enumTypes,
+		MessageInfos:      file_api_proto_v1_spatial_proto_msgTypes,
 	}.Build()
-	File_backend_api_proto_v1_spatial_proto = out.File
-	file_backend_api_proto_v1_spatial_proto_goTypes = nil
-	file_backend_api_proto_v1_spatial_proto_depIdxs = nil
+	File_api_proto_v1_spatial_proto = out.File
+	file_api_proto_v1_spatial_proto_goTypes = nil
+	file_api_proto_v1_spatial_proto_depIdxs = nil
 }

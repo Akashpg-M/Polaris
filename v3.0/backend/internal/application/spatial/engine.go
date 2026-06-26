@@ -2,14 +2,12 @@ package spatial
 
 import (
 	"hash/fnv"
-	"log/slog"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/Akashpg-M/polaris/backend/algo_/geo"
 	"github.com/Akashpg-M/polaris/backend/algo_/quadtree"
-	"github.com/Akashpg-M/polaris/backend/internal/core/domain"
+	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 )
 
 // ShardCount dictates how many independent memory partitions exist.
@@ -18,7 +16,7 @@ const ShardCount = 32
 
 type EngineShard struct {
 	mu    sync.RWMutex
-	nodes map[string]*domain.TelemetryPayload
+	nodes map[string]*pb.SpatialObject
 }
 
 type Engine struct {
@@ -29,6 +27,7 @@ type Engine struct {
 // MatchResult is the DTO sent back to the dispatcher
 type MatchResult struct {
 	NodeID     string  `json:"node_id"`
+	Type       pb.NodeType `json:"node_type"`
 	Class      uint16  `json:"asset_class"`
 	Lat        float64 `json:"lat"`
 	Lon        float64 `json:"lon"`
@@ -52,7 +51,6 @@ func (e *Engine) getShard(nodeID string) *EngineShard {
 	h.Write([]byte(nodeID))
 	return e.shards[h.Sum32()%ShardCount]
 }
-
 
 func (e *Engine) BatchUpdate(payloads []*pb.SpatialObject) {
 	if len(payloads) == 0 { return }

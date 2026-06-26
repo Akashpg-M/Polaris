@@ -1,18 +1,20 @@
 package stream
 
 import (
+	
 	"context"
 	"log/slog"
 	"time"
 
-	"github.com/Akashpg-M/polaris/internal/adapter/repository"
-	"github.com/Akashpg-M/polaris/internal/core/domain/pb"
+	// "github.com/Akashpg-M/polaris/backend/internal/adapter/repository"
+	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 	"github.com/jmoiron/sqlx"
 	"github.com/segmentio/kafka-go"
 	_ "github.com/lib/pq"
 	"google.golang.org/protobuf/proto"
 )
 
+const KafkaTelemetryTopic = "telemetry.ingress"
 const DeadLetterTopic = "telemetry.dead_letters"
 
 type KafkaPostgresArchiver struct {
@@ -24,7 +26,7 @@ type KafkaPostgresArchiver struct {
 func NewKafkaPostgresArchiver(brokerURL, postgresURL string) (*KafkaPostgresArchiver, error) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:  []string{brokerURL},
-		Topic:    repository.TelemetryTopic,
+		Topic:    KafkaTelemetryTopic,
 		GroupID:  "polaris_archive_group",
 		MinBytes: 10e3, // 10KB
 		MaxBytes: 10e6, // 10MB
@@ -70,9 +72,21 @@ func (a *KafkaPostgresArchiver) Start(ctx context.Context) {
 
 			// 2. Attempt relational long-term persistence execution
 			_, dbErr := a.db.ExecContext(ctx, `
-				INSERT INTO telemetry_history (tenant_id, node_id, asset_class, lat, lon, status, battery, recorded_at) 
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-				payload.TenantId, payload.Id, int(payload.Type), payload.Lat, payload.Lon, string(payload.Status), payload.EnergyPercent, payload.Timestamp.AsTime(),
+				INSERT INTO telemetry_history 
+				(tenant_id, node_id, asset_type, lat, lon, geom, status, velocity_mps, heading_deg, battery, recorded_at) 
+				VALUES 
+				($1, $2, $3, $4, $5, ST_SetSRID(ST_MakePoint($5, $4), 4326), $6, $7, $8, $9, $10)`,
+				payload.TenantId,                  // $1: tenant_id
+				payload.Id,                        // $2: node_id
+				int(payload.Type),                 // $3: asset_type (cast Enum to int)
+				payload.Lat,                       // $4: lat
+				payload.Lon,                       // $5: lon
+				// geom is automatically handled in SQL by PostGIS using $4 and $5
+				int(payload.Status),               // $6: status (cast Enum to int)
+				payload.VelocityMps,               // $7: velocity_mps
+				payload.HeadingDeg,                // $8: heading_deg
+				payload.EnergyPercent,             // $9: battery (maps to EnergyPercent from proto)
+				time.UnixMilli(payload.Timestamp), // $10: recorded_at (convert int64 to time.Time)
 			)
 
 			// 3. If database constraints reject it, isolate and continue the group pipeline

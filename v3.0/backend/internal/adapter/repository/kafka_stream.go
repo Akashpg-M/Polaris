@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/Akashpg-M/polaris/backend/internal/core/domain/pb"
+	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 	"github.com/segmentio/kafka-go"
 	"github.com/uber/h3-go/v4"
 	"google.golang.org/protobuf/proto"
@@ -31,11 +31,15 @@ func NewKafkaStreamAdapter(brokerURL string) *KafkaStreamAdapter {
 	return &KafkaStreamAdapter{writer: writer}
 }
 
-// Publish implements ports.TelemetryPublisher
 func (k *KafkaStreamAdapter) Publish(ctx context.Context, payload *pb.SpatialObject) error {
 	// 1. Calculate the Spatial Partition Key (Uber H3)
 	latLng := h3.NewLatLng(payload.Lat, payload.Lon)
-	h3Cell := h3.LatLngToCell(latLng, H3Resolution)
+	
+	// FIXED: Catch the error returned by LatLngToCell
+	h3Cell, err := h3.LatLngToCell(latLng, H3Resolution)
+	if err != nil {
+		return fmt.Errorf("failed to calculate H3 cell: %w", err)
+	}
 	h3Key := h3Cell.String()
 
 	// 2. Serialize to raw Protocol Buffers

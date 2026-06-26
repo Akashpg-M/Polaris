@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
+	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 	"github.com/Akashpg-M/polaris/backend/internal/core/ports"
 )
 
@@ -19,8 +20,8 @@ type Zone struct {
 	Lon            float64
 	RadiusKm       float64
 	RequiredAssets int
-	TargetClass    uint16 // e.g., Drone vs Vehicle
-    TenantID       string // Supports SaaS isolation
+	TargetClass    pb.NodeType // e.g., Drone vs Vehicle
+  TenantID       string // Supports SaaS isolation
 }
 
 // CommandPayload is the JSON sent to the physical device

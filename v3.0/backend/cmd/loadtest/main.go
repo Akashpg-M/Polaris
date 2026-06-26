@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -15,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+  pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
+  "google.golang.org/protobuf/proto"
 )
 
 // Atomic counters for thread-safe, high-speed metrics tracking
@@ -87,7 +88,6 @@ SpawnLoop:
 func simulateDrone(ctx context.Context, id int, wsURL string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	// 1. Establish the Uplink
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		atomic.AddInt64(&connectionErrors, 1)
@@ -99,52 +99,52 @@ func simulateDrone(ctx context.Context, id int, wsURL string, wg *sync.WaitGroup
 	defer atomic.AddInt64(&activeConnections, -1)
 
 	nodeID := fmt.Sprintf("STRESS-DRONE-%d", id)
-
-	// Spawn in a random location near Chennai
 	lat := 13.04 + (rand.Float64() * 0.1)
 	lon := 80.24 + (rand.Float64() * 0.1)
 
-	// 2. The Read Pump (CRITICAL)
-	// If we don't read the server's responses, the TCP buffer fills up and the connection hangs.
 	go func() {
 		for {
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				return // Server closed connection or network dropped
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
 			}
 		}
 	}()
 
-	// 3. The Telemetry Loop
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done(): // Global shutdown triggered
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Simulate slight movement
 			lat += (rand.Float64() - 0.5) * 0.001
 			lon += (rand.Float64() - 0.5) * 0.001
 
-			payload := Payload{
-				TenantID: "alpha_logistics",
-				NodeID:   nodeID,
-				Class:    16, // Drone
-				Lat:      lat,
-				Lon:      lon,
-				Status:   "en_route",
-				Battery:  rand.Intn(100),
+			// 1. Construct the Protobuf payload
+			payload := &pb.SpatialObject{
+				TenantId:      "alpha_logistics",
+				Id:            nodeID,
+				Type:          pb.NodeType_NODE_TYPE_DRONE,
+				Lat:           lat,
+				Lon:           lon,
+				Status:        pb.NodeStatus_NODE_STATUS_ACTIVE,
+				EnergyPercent: uint32(rand.Intn(100)),
 			}
 
-			msg, _ := json.Marshal(payload)
-			err := conn.WriteMessage(websocket.TextMessage, msg)
+			// 2. Marshal to raw bytes using proto
+			msgBytes, err := proto.Marshal(payload)
 			if err != nil {
 				atomic.AddInt64(&connectionErrors, 1)
-				return // Connection died, exit the goroutine
+				return
 			}
-			
+
+			// 3. Send as a BinaryMessage
+			if err := conn.WriteMessage(websocket.BinaryMessage, msgBytes); err != nil {
+				atomic.AddInt64(&connectionErrors, 1)
+				return
+			}
+
 			atomic.AddInt64(&messagesSent, 1)
 		}
 	}

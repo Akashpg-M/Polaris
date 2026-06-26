@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Akashpg-M/polaris/backend/algo_/graph"
 	"github.com/Akashpg-M/polaris/backend/algo_/logger"
 	"github.com/Akashpg-M/polaris/backend/internal/adapter/handler"
 	"github.com/Akashpg-M/polaris/backend/internal/application/orchestrator"
@@ -17,6 +18,8 @@ import (
 	"github.com/Akashpg-M/polaris/backend/internal/application/stream"
 	"github.com/Akashpg-M/polaris/backend/internal/config"
 	redisinfra "github.com/Akashpg-M/polaris/backend/internal/infra/redis"
+	"github.com/Akashpg-M/polaris/backend/internal/infra/osm"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -38,6 +41,13 @@ func main() {
 	logger.Init()
 	slog.Info("Booting Polaris v3.0 Spatial Engine...", "env", cfg.App.Env)
 
+	roadNetwork, err := osm.LoadRoadNetwork("data/chennai-metro.osm.pbf")
+	if err != nil {
+		slog.Warn("OSM Graph initialization failed. Routing API will be offline.", "error", err)
+		// If you don't have the file yet, we initialize an empty graph so the server doesn't crash
+		roadNetwork = graph.NewRoadNetwork() 
+	}
+
 	engine := spatial.NewEngine()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -54,11 +64,18 @@ func main() {
 	kafkaConsumer := stream.NewKafkaConsumer(kafkaBroker, engine)
 	go kafkaConsumer.Start(ctx, "engine-node-1")
 
-	archiver, err := stream.NewPostgresArchiver(cfg.Redis.URL, cfg.DB.URL)
+	// FIXED: Using the new Kafka-based archiver and passing the Kafka broker URL instead of Redis
+	archiver, err := stream.NewKafkaPostgresArchiver(kafkaBroker, cfg.DB.URL)
 	if err != nil {
-		slog.Warn("PostgreSQL unreachable...")
+		slog.Warn("Kafka/PostgreSQL Archiver offline...")
 	} else {
 		go archiver.Start(ctx)
+	}
+
+
+	if roadNetwork != nil {
+		trafficAnalyzer := stream.NewTrafficAnalyzer(kafkaBroker, roadNetwork)
+		go trafficAnalyzer.Start(ctx)
 	}
 
 	redisClient, err := redisinfra.NewClient(cfg.Redis.URL)
@@ -83,9 +100,12 @@ func main() {
 	router.Use(gin.Recovery(), cors.Default())
 
 	matchHandler := handler.NewMatchHandler(engine)
+	routingHandler := handler.NewRoutingHandler(roadNetwork)
+
 	api := router.Group("/api/v1")
 	{
 		api.GET("/nodes/match", matchHandler.GetNearestNodes)
+		api.GET("/routes/calculate", routingHandler.CalculateRoute)
 		api.GET("/zones/predicted", func(c *gin.Context) {
 			if predictiveStrategy != nil {
 				c.JSON(200, gin.H{"status": "success", "data": predictiveStrategy.GetTargetZones(context.Background())})

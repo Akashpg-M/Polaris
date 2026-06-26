@@ -2,11 +2,9 @@ package ports
 
 import (
 	"context"
-	"github.com/Akashpg-M/polaris/backend/internal/core/domain"
+	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 )
 
-// TelemetryPublisher defines how incoming IoT pings are buffered before processing.
 type TelemetryPublisher interface {
-	// Publish drops the raw telemetry into a stream/queue immediately.
 	Publish(ctx context.Context, payload *pb.SpatialObject) error
 }
