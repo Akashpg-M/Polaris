@@ -1,6 +1,6 @@
 syntax = "proto3";
 package polaris.spatial.v1;
-option go_package = "github.com/Akashpg-M/polaris/v3.0/backend/api/proto/v1;v1";
+option go_package = "github.com/Akashpg-M/polaris/v3.0/backend/api/proto/v1";
 
 enum NodeType {
   NODE_TYPE_UNKNOWN = 0;
@@ -29,10 +29,8 @@ message SpatialObject {
   NodeStatus status = 4;
   double lat = 5;
   double lon = 6;
-  float velocity_mps = 7; 
-  float heading_deg = 8;  
-  
-  // ---> FIXED FIELDS TO MATCH YOUR CODE <---
+  double velocity_mps = 7; 
+  double heading_deg = 8;  
   int32 energy_percent = 9; // Generates as .EnergyPercent in Go
   int64 timestamp = 10;     // Generates as .Timestamp in Go (Unix Milliseconds/Seconds)
 }

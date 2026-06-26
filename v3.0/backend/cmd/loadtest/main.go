@@ -129,7 +129,7 @@ func simulateDrone(ctx context.Context, id int, wsURL string, wg *sync.WaitGroup
 				Lat:           lat,
 				Lon:           lon,
 				Status:        pb.NodeStatus_NODE_STATUS_ACTIVE,
-				EnergyPercent: uint32(rand.Intn(100)),
+				EnergyPercent: int32(rand.Intn(100)),
 			}
 
 			// 2. Marshal to raw bytes using proto
