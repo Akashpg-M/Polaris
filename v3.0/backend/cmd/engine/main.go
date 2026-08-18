@@ -15,8 +15,11 @@ import (
 	"github.com/Akashpg-M/polaris/backend/algo_/logger"
 	"github.com/Akashpg-M/polaris/backend/internal/adapter/handler"
 	"github.com/Akashpg-M/polaris/backend/internal/adapter/repository"
+	"github.com/Akashpg-M/polaris/backend/internal/application/dispatch"
+	"github.com/Akashpg-M/polaris/backend/internal/application/orchestration"
 	"github.com/Akashpg-M/polaris/backend/internal/application/orchestrator"
 	"github.com/Akashpg-M/polaris/backend/internal/application/outbox"
+	"github.com/Akashpg-M/polaris/backend/internal/application/reconciliation"
 	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
 	"github.com/Akashpg-M/polaris/backend/internal/application/stream"
 	"github.com/Akashpg-M/polaris/backend/internal/application/twin"
@@ -91,6 +94,13 @@ func main() {
 	}
 	outboxRelay := outbox.New(registryStore, kafkaBroker, envInt("OUTBOX_BATCH_SIZE", 100), envDuration("OUTBOX_POLL_INTERVAL", 500*time.Millisecond))
 	go outboxRelay.Start(ctx)
+	orchestrationMetrics := orchestration.NewMetrics()
+	orchestrationService := orchestration.NewService(registryStore, redisClient, envInt("COMMAND_MAX_ATTEMPTS", 5), orchestrationMetrics)
+	ownershipStore := repository.NewConnectionOwnershipStore(redisClient, envDuration("CONNECTION_LEASE_TTL", 30*time.Second))
+	commandDispatcher := dispatch.New(kafkaBroker, redisClient, ownershipStore)
+	go commandDispatcher.Start(ctx)
+	commandReconciler := reconciliation.New(registryStore, orchestrationService, ownershipStore, envDuration("COMMAND_RECONCILE_INTERVAL", time.Second), envDuration("COMMAND_ACK_TIMEOUT", 5*time.Second))
+	go commandReconciler.Start(ctx)
 	connectivityDetector := twin.NewDetector(redisClient, kafkaBroker, envDuration("DEVICE_STALE_AFTER", 30*time.Second), envDuration("DEVICE_OFFLINE_AFTER", 90*time.Second), envDuration("OFFLINE_SCAN_INTERVAL", 10*time.Second))
 	go connectivityDetector.Start(ctx)
 
@@ -120,6 +130,7 @@ func main() {
 	{
 		registryAPI := handler.NewRegistryAPI(registryStore, redisClient, envDuration("DEVICE_STALE_AFTER", 30*time.Second), envDuration("DEVICE_OFFLINE_AFTER", 90*time.Second), envDuration("CONNECTION_TICKET_TTL", 30*time.Second))
 		registryAPI.Register(api)
+		handler.NewOrchestrationAPI(registryStore, orchestrationService, orchestrationMetrics).Register(api, registryAPI)
 		protected := api.Group("")
 		protected.Use(registryAPI.Middleware("read"))
 		protected.GET("/nodes/match", matchHandler.GetNearestNodes)
@@ -133,7 +144,7 @@ func main() {
 		})
 	}
 	router.GET("/healthz", func(c *gin.Context) {
-		if !kafkaConsumer.Healthy() || (archiver != nil && !archiver.Healthy()) {
+		if !kafkaConsumer.Healthy() || !commandDispatcher.Healthy() || (archiver != nil && !archiver.Healthy()) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy"})
 			return
 		}
@@ -189,6 +200,9 @@ func main() {
 		if err := archiver.Wait(ctxShutdown); err != nil {
 			slog.Error("Archive consumer shutdown timed out", "error", err)
 		}
+	}
+	if err := commandDispatcher.Wait(ctxShutdown); err != nil {
+		slog.Error("Command dispatcher shutdown timed out", "error", err)
 	}
 	redisClient.Close()
 	slog.Info("Engine safely terminated.")

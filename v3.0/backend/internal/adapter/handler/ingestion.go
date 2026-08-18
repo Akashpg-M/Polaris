@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 	"github.com/Akashpg-M/polaris/backend/internal/core/actor"
 	"github.com/Akashpg-M/polaris/backend/internal/core/auth"
+	"github.com/Akashpg-M/polaris/backend/internal/core/command"
 	"github.com/Akashpg-M/polaris/backend/internal/core/events"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -28,6 +30,7 @@ type IngestionHandler struct {
 	actorRegistry *actor.ActorRegistry
 	activeSockets int64
 	authenticator DeviceAuthenticator
+	connections   *DeviceConnectionManager
 }
 
 type DeviceAuthenticator interface {
@@ -36,11 +39,12 @@ type DeviceAuthenticator interface {
 	RevalidateDevice(context.Context, auth.DevicePrincipal) error
 }
 
-func NewIngestionHandler(reg *actor.ActorRegistry, authenticator DeviceAuthenticator) *IngestionHandler {
+func NewIngestionHandler(reg *actor.ActorRegistry, authenticator DeviceAuthenticator, connections *DeviceConnectionManager) *IngestionHandler {
 	return &IngestionHandler{
 		actorRegistry: reg,
 		activeSockets: 0, // High-performance, lock-free counter
 		authenticator: authenticator,
+		connections:   connections,
 	}
 }
 
@@ -61,6 +65,12 @@ func (h *IngestionHandler) HandleIoTConnection(c *gin.Context) {
 	}
 	defer conn.Close()
 	conn.SetReadLimit(events.MaxFrameBytes)
+	session, err := h.connections.Register(c.Request.Context(), conn, principal)
+	if err != nil {
+		rejectFrame(conn, "connection ownership could not be established")
+		return
+	}
+	defer h.connections.Unregister(context.Background(), session)
 
 	atomic.AddInt64(&h.activeSockets, 1)
 	defer atomic.AddInt64(&h.activeSockets, -1)
@@ -75,8 +85,19 @@ func (h *IngestionHandler) HandleIoTConnection(c *gin.Context) {
 			break
 		}
 
+		if err := h.authenticator.RevalidateDevice(c.Request.Context(), principal); err != nil {
+			session.close(websocket.ClosePolicyViolation, "credential or device was revoked")
+			return
+		}
+		if msgType == websocket.TextMessage {
+			if err := h.handleDeviceControl(c.Request.Context(), principal, data); err != nil {
+				session.close(websocket.ClosePolicyViolation, "command response rejected")
+				return
+			}
+			continue
+		}
 		if msgType != websocket.BinaryMessage {
-			slog.Warn("[Gateway] Security violation: Non-binary payload dropped.")
+			slog.Warn("[Gateway] Security violation: unsupported WebSocket frame dropped.")
 			continue
 		}
 
@@ -89,10 +110,6 @@ func (h *IngestionHandler) HandleIoTConnection(c *gin.Context) {
 		if err := events.ValidateFrame(&payload, time.Now()); err != nil {
 			slog.Warn("[Gateway] Rejected invalid telemetry before Kafka", "error", err)
 			rejectFrame(conn, err.Error())
-			return
-		}
-		if err := h.authenticator.RevalidateDevice(c.Request.Context(), principal); err != nil {
-			rejectFrame(conn, "credential or device was revoked")
 			return
 		}
 		if payload.Id != principal.DeviceID || payload.TenantId != principal.TenantID {
@@ -138,6 +155,47 @@ func (h *IngestionHandler) HandleIoTConnection(c *gin.Context) {
 		slog.Info("[Gateway] Telemetry channel closed at edge boundary", "node_id", nodeID)
 		// NOTE: In an event-sourced distributed control system, we do NOT destroy the actor immediately
 		// because the actor might still have pending messages to clear in its channel mailbox queue!
+	}
+}
+
+func (h *IngestionHandler) handleDeviceControl(ctx context.Context, principal auth.DevicePrincipal, data []byte) error {
+	var header struct {
+		FrameType string `json:"frame_type"`
+	}
+	if len(data) > 64*1024 || json.Unmarshal(data, &header) != nil {
+		return errors.New("invalid device control envelope")
+	}
+	switch header.FrameType {
+	case "COMMAND_ACK":
+		var ack command.Ack
+		if json.Unmarshal(data, &ack) != nil || ack.CommandID == "" || ack.SequenceNumber < 1 {
+			return errors.New("invalid command acknowledgement")
+		}
+		if ack.Status != "ACCEPTED" && ack.Status != "REJECTED" && ack.Status != "DUPLICATE" && ack.Status != "EXPIRED" && ack.Status != "UNSUPPORTED" {
+			return errors.New("unsupported acknowledgement status")
+		}
+		if err := h.connections.store.ApplyCommandAck(ctx, principal.TenantID, principal.DeviceID, ack); err != nil {
+			return err
+		}
+		h.connections.metrics.CommandsAcknowledged.Add(1)
+		return nil
+	case "COMMAND_RESULT":
+		var result command.Result
+		if json.Unmarshal(data, &result) != nil || result.CommandID == "" || result.SequenceNumber < 1 || (result.Status != "SUCCEEDED" && result.Status != "COMPLETED" && result.Status != "FAILED") {
+			return errors.New("invalid command result")
+		}
+		if err := h.connections.store.ApplyCommandResult(ctx, principal.TenantID, principal.DeviceID, result); err != nil {
+			return err
+		}
+		if result.Status == "SUCCEEDED" || result.Status == "COMPLETED" {
+			h.connections.metrics.TasksCompleted.Add(1)
+		} else {
+			h.connections.metrics.CommandsFailed.Add(1)
+			h.connections.metrics.TasksFailed.Add(1)
+		}
+		return nil
+	default:
+		return errors.New("unsupported device frame type")
 	}
 }
 

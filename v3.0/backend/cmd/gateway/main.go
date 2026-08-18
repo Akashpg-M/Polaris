@@ -133,7 +133,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -144,6 +143,7 @@ import (
 	"github.com/Akashpg-M/polaris/backend/algo_/logger"
 	"github.com/Akashpg-M/polaris/backend/internal/adapter/handler"
 	"github.com/Akashpg-M/polaris/backend/internal/adapter/repository"
+	"github.com/Akashpg-M/polaris/backend/internal/application/orchestration"
 	"github.com/Akashpg-M/polaris/backend/internal/config"
 	"github.com/Akashpg-M/polaris/backend/internal/core/actor" // 🧱 New Actor Core Import
 	"github.com/gin-gonic/gin"
@@ -178,10 +178,12 @@ func main() {
 	// Keep Legacy Dashboard Tracking for UI Downstream Egress Broadcasts
 	dashboardRegistry := handler.NewDashboardRegistry()
 
-	// 3. Start Background Async Topic Consumers
-	// Note: Command loop can now target actors directly or pass through our registries
-	go startCommandSubscriber(cfg.Redis.URL, actorRegistry)
+	// 3. Start tenant-filtered dashboard egress and durable command routing.
 	go startDashboardSubscriber(cfg.Redis.URL, dashboardRegistry)
+	orchestrationMetrics := orchestration.NewMetrics()
+	connectionManager := handler.NewDeviceConnectionManager(getEnvFallback("GATEWAY_ID", "gateway-1"), getDurationFallback("CONNECTION_LEASE_TTL", 30*time.Second), healthRedis, registryStore, orchestrationMetrics)
+	go connectionManager.StartSubscriber(context.Background())
+	go connectionManager.StartReconciler(context.Background(), getDurationFallback("COMMAND_RECONCILE_INTERVAL", time.Second))
 
 	gin.SetMode(gin.ReleaseMode)
 
@@ -201,7 +203,7 @@ func main() {
 	})
 
 	// 4. Wired Handlers (Passing Actor Engine to handle Ingress Isolation)
-	ingestionHandler := handler.NewIngestionHandler(actorRegistry, registryStore)
+	ingestionHandler := handler.NewIngestionHandler(actorRegistry, registryStore, connectionManager)
 	dashboardHandler := handler.NewDashboardHandler(dashboardRegistry, registryStore)
 
 	// Ingress endpoint (Binary Protobuf payloads go into Actor Mailboxes)
@@ -225,6 +227,7 @@ func main() {
 			// Reads directly from our high-performance atomic tracking indicator
 			c.JSON(200, gin.H{"active_uplinks": ingestionHandler.GetActiveConnectionsCount()})
 		})
+		api.GET("/metrics/orchestration", func(c *gin.Context) { c.JSON(200, orchestrationMetrics.Snapshot()) })
 	}
 	router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "live"}) })
 	router.GET("/readyz", func(c *gin.Context) {
@@ -269,28 +272,6 @@ func main() {
 	slog.Info("Gateway safely terminated.")
 }
 
-func startCommandSubscriber(redisURL string, actorRegistry *actor.ActorRegistry) {
-	opts, _ := redis.ParseURL(redisURL)
-	client := redis.NewClient(opts)
-	pubsub := client.Subscribe(context.Background(), "telemetry:commands")
-	defer pubsub.Close()
-
-	for msg := range pubsub.Channel() {
-		var payload struct {
-			NodeID    string `json:"node_id"`
-			Directive string `json:"directive"`
-		}
-		if err := json.Unmarshal([]byte(msg.Payload), &payload); err == nil {
-			// Routing inbound operator overrides straight to the targeted Actor mailbox
-			targetActor := actorRegistry.GetOrCreate(payload.NodeID)
-			_ = targetActor.Push(actor.CommandMsg{
-				Directive: payload.Directive,
-				Payload:   nil,
-			})
-		}
-	}
-}
-
 func startDashboardSubscriber(redisURL string, dashboardRegistry *handler.DashboardRegistry) {
 	opts, _ := redis.ParseURL(redisURL)
 	client := redis.NewClient(opts)
@@ -305,6 +286,15 @@ func startDashboardSubscriber(redisURL string, dashboardRegistry *handler.Dashbo
 func getEnvFallback(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return fallback
+}
+
+func getDurationFallback(key string, fallback time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := time.ParseDuration(value); err == nil {
+			return parsed
+		}
 	}
 	return fallback
 }

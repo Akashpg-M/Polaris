@@ -34,6 +34,10 @@ services:
         fi
         rpk topic create device.lifecycle.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
         rpk topic create device.connectivity.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
+        rpk topic create task.lifecycle.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
+        rpk topic create device.command.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
+        rpk topic create device.command.ack.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
+        rpk topic create device.command.result.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
   postgres:
     image: postgis/postgis:16-3.4
     environment:
@@ -68,6 +72,9 @@ services:
       KAFKA_BROKER_URL: redpanda:29092
       REDIS_URL: redis://redis:6379/0
       POSTGRES_URL: postgres://polaris_user:polaris_password@postgres:5432/polaris_core?sslmode=disable
+      GATEWAY_ID: ${GATEWAY_ID:-gateway-1}
+      CONNECTION_LEASE_TTL: ${CONNECTION_LEASE_TTL:-30s}
+      COMMAND_RECONCILE_INTERVAL: ${COMMAND_RECONCILE_INTERVAL:-1s}
     ports: ["6080:6080"]
     depends_on:
       kafka-init: { condition: service_completed_successfully }
@@ -95,6 +102,10 @@ services:
       CONNECTION_TICKET_TTL: ${CONNECTION_TICKET_TTL:-30s}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-100}
       OUTBOX_POLL_INTERVAL: ${OUTBOX_POLL_INTERVAL:-500ms}
+      CONNECTION_LEASE_TTL: ${CONNECTION_LEASE_TTL:-30s}
+      COMMAND_ACK_TIMEOUT: ${COMMAND_ACK_TIMEOUT:-5s}
+      COMMAND_RECONCILE_INTERVAL: ${COMMAND_RECONCILE_INTERVAL:-1s}
+      COMMAND_MAX_ATTEMPTS: ${COMMAND_MAX_ATTEMPTS:-5}
     ports: ["6081:6081"]
     depends_on:
       kafka-init: { condition: service_completed_successfully }

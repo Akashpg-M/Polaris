@@ -551,7 +551,7 @@ func (s *RegistryStore) ClaimOutbox(ctx context.Context, limit int) ([]OutboxEve
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryxContext(ctx, `SELECT outbox_id,event_id,event_type,tenant_id,payload FROM outbox_events WHERE status IN('PENDING','RETRY_PENDING') AND next_attempt_at<=NOW() ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED`, limit)
+	rows, err := tx.QueryxContext(ctx, `SELECT outbox_id,event_id,event_type,tenant_id,payload FROM outbox_events WHERE status IN('PENDING','RETRY_PENDING') AND next_attempt_at<=NOW() ORDER BY CASE WHEN event_type IN('command.created.v1','command.retry.requested.v1') THEN 0 ELSE 1 END,created_at LIMIT $1 FOR UPDATE SKIP LOCKED`, limit)
 	if err != nil {
 		return nil, err
 	}

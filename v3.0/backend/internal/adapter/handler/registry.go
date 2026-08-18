@@ -2,8 +2,8 @@ package handler
 
 import (
 	"fmt"
-	"sync"
 	"github.com/gorilla/websocket"
+	"sync"
 )
 
 // Client wraps a websocket connection with a mutex to prevent concurrent write panics
@@ -49,7 +49,7 @@ func (r *ConnectionRegistry) SendCommand(nodeID string, payload interface{}) err
 	// Lock the specific client for thread-safe writing
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	
+
 	return client.conn.WriteJSON(payload)
 }
 

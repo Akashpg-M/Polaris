@@ -152,3 +152,49 @@ INSERT INTO capabilities(capability_id,display_name,description) VALUES
  ('receive_relocation_command','Receive relocation command','Accept relocation directives'),
  ('capture_image','Capture image','Capture still imagery'),
  ('measure_temperature','Measure temperature','Report ambient temperature') ON CONFLICT DO NOTHING;
+
+-- Phase 3: durable task, assignment and command orchestration.
+CREATE TABLE IF NOT EXISTS tasks (
+  task_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id), project_id UUID REFERENCES projects(project_id),
+  task_type TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('PENDING','ASSIGNING','ASSIGNED','IN_PROGRESS','COMPLETED','FAILED','CANCELLED','EXPIRED')),
+  priority TEXT NOT NULL CHECK(priority IN ('LOW','NORMAL','HIGH','CRITICAL')), requirements JSONB NOT NULL DEFAULT '{}', target JSONB NOT NULL DEFAULT '{}',
+  assigned_device_id TEXT, correlation_id TEXT NOT NULL, created_by UUID NOT NULL REFERENCES operator_api_keys(api_key_id),
+  version BIGINT NOT NULL DEFAULT 1, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  assigned_at TIMESTAMPTZ, started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, failed_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL, failure_reason TEXT,
+  FOREIGN KEY(tenant_id,assigned_device_id) REFERENCES devices(tenant_id,device_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_tenant_status ON tasks(tenant_id,status,priority,created_at);
+
+CREATE TABLE IF NOT EXISTS device_assignments (
+  assignment_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, device_id TEXT NOT NULL, task_id UUID NOT NULL REFERENCES tasks(task_id),
+  status TEXT NOT NULL CHECK(status IN ('ACTIVE','RELEASED','EXPIRED')), lease_expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY(tenant_id,device_id) REFERENCES devices(tenant_id,device_id), UNIQUE(task_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_device_active_assignment ON device_assignments(tenant_id,device_id) WHERE status='ACTIVE';
+
+CREATE TABLE IF NOT EXISTS device_command_sequences (
+  tenant_id TEXT NOT NULL, device_id TEXT NOT NULL, last_sequence BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY(tenant_id,device_id), FOREIGN KEY(tenant_id,device_id) REFERENCES devices(tenant_id,device_id)
+);
+
+CREATE TABLE IF NOT EXISTS commands (
+  command_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, device_id TEXT NOT NULL, task_id UUID NOT NULL REFERENCES tasks(task_id),
+  command_type TEXT NOT NULL, payload JSONB NOT NULL, status TEXT NOT NULL CHECK(status IN ('PENDING','DELIVERED','ACKNOWLEDGED','COMPLETED','FAILED','EXPIRED','CANCELLED')),
+  sequence_number BIGINT NOT NULL, correlation_id TEXT NOT NULL, causation_id TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5 CHECK(max_attempts>0), version BIGINT NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), sent_at TIMESTAMPTZ,
+  acknowledged_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, expires_at TIMESTAMPTZ NOT NULL,
+  ack_status TEXT, result JSONB, last_error TEXT,
+  FOREIGN KEY(tenant_id,device_id) REFERENCES devices(tenant_id,device_id), UNIQUE(tenant_id,device_id,sequence_number)
+);
+CREATE INDEX IF NOT EXISTS idx_commands_dispatch ON commands(status,available_at,expires_at);
+CREATE INDEX IF NOT EXISTS idx_commands_device_order ON commands(tenant_id,device_id,sequence_number);
+CREATE INDEX IF NOT EXISTS idx_commands_task ON commands(tenant_id,task_id);
+
+CREATE TABLE IF NOT EXISTS command_attempts (
+  attempt_id UUID PRIMARY KEY, command_id UUID NOT NULL REFERENCES commands(command_id), attempt_number INTEGER NOT NULL,
+  gateway_id TEXT NOT NULL, ownership_epoch BIGINT NOT NULL, started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ, result TEXT, error TEXT, UNIQUE(command_id,attempt_number)
+);

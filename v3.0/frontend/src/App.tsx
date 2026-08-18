@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import MapDashboard from './pages/MapDashboard';
 import SwarmTester from './pages/SwarmTester';
 import Analytics from './pages/Analytics';
+import Tasks from './pages/Tasks';
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
             <Link to="/" className="hover:text-blue-400 transition">📍 Spatial Map</Link>
             <Link to="/analytics" className="hover:text-blue-400 transition">📈 Analytics</Link>
             <Link to="/swarm" className="hover:text-blue-400 transition">🚁 Swarm Tester</Link>
+            <Link to="/tasks" className="hover:text-blue-400 transition">Task Orchestration</Link>
           </nav>
           
           <div className="mt-auto text-[10px] text-slate-500 text-center">
@@ -29,6 +31,7 @@ export default function App() {
             <Route path="/" element={<MapDashboard />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/swarm" element={<SwarmTester />} />
+            <Route path="/tasks" element={<Tasks />} />
           </Routes>
         </div>
       </div>

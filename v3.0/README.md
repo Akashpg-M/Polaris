@@ -30,6 +30,18 @@ PostgreSQL registry metadata + capabilities
                          + Redis reported state / connectivity
                                       |
                                       +--> tenant-isolated digital-twin API
+
+Task API --> deterministic capability/twin selection --> exclusive assignment
+    |                         |
+    |                         +--> PostgreSQL command + audit + outbox (atomic)
+    |                                              |
+    |                                              v
+    |                                  device.command.v1 (Kafka)
+    |                                              |
+    v                                              v
+Task reconciliation <-- ACK/result <-- authenticated bidirectional WebSocket
+                                              ^
+Redis leased gateway ownership + fencing epoch-+
 ```
 
 The delivery contract is **at least once with idempotent consumers**, not exactly once. Telemetry is keyed by `tenant_id:device_id`, preserving per-device order across H3-cell movement. H3 remains downstream-only. Each Kafka partition is processed in offset order and commits only its highest contiguous successful offset after durable projection. Batches flush at 1,000 records or 150 ms. Permanent failures are published to `telemetry.dead-letter.v1` before their source offset is committed; transient failures retry without crossing the failed offset.
@@ -43,6 +55,16 @@ Registry, twin, spatial, route, and dashboard-ticket APIs require a bearer opera
 Device credentials contain 256 bits of cryptographic secret material and are stored only as hashes. A telemetry WebSocket is upgraded only after an active credential resolves to an active tenant and device. The authenticated principal must match the redundant payload identity, and the Kafka envelope always uses the principal identity. Browser simulators exchange operator authentication for a short-lived, hashed, one-use connection ticket. Credential, device, and tenant status are revalidated during an active telemetry session, so revocation takes effect on its next frame.
 
 Registry mutations atomically write their audit and outbox records. The embedded relay publishes lifecycle events with at-least-once semantics. Digital twins compose PostgreSQL metadata and capabilities with the Phase 1 Redis reported state. The Redis last-seen index supports `NEVER_CONNECTED`, `ONLINE`, `STALE`, and `OFFLINE` states without scanning keys.
+
+## Phase 3 task and command orchestration
+
+Tasks express business intent, capability requirements, battery/distance constraints, priority, target, project scope, and expiry independently from device commands. Assignment is deterministic—distance, battery, then stable device ID—and an exclusive partial index prevents two active assignments from claiming the same device. The assignment, per-device command sequence, command envelope, audit event, and outbox intent are committed before any socket delivery.
+
+`device.command.v1` is keyed by `tenant_id:device_id`. Redis stores only live gateway ownership, lease expiry, and a monotonically increasing fencing epoch; PostgreSQL and Kafka remain the durable sources. Redis Pub/Sub accelerates routing to the current gateway, while periodic database reconciliation and reconnect reconciliation guarantee store-and-forward recovery if a notification is missed.
+
+The authenticated telemetry WebSocket is bidirectional. Telemetry remains binary Protobuf. Server commands and device `COMMAND_ACK`/`COMMAND_RESULT` messages use explicit versioned JSON envelopes. ACK means received/accepted; completion is a separate result. Retry keeps the same `command_id` and sequence. The simulator caches completed command IDs and resends its prior ACK/result without repeating execution.
+
+Task and command APIs are tenant scoped and role protected. Operators can create/cancel tasks; tenant and platform administrators can force command/task retries; viewers are read-only. Local cancellation is allowed only before delivery. Commands that have reached a device cannot be silently cancelled as though execution stopped.
 
 ## Run locally with Docker Compose
 
@@ -86,6 +108,14 @@ Run the authenticated Phase 2 registry, credential, isolation, twin, connectivit
 
 The exact scenarios, live results, operational assumptions, and API inventory are recorded in `PHASE_2_IDENTITY_AND_TWIN_EVIDENCE.md`.
 
+Run the complete Phase 3 task/command, ACK/result, retry, fencing, outage, replay, RBAC, and recovery proof with:
+
+```powershell
+./backend/deployments/phase3-command-test.ps1
+```
+
+The architecture contract and captured evidence are documented in `PHASE_3_COMMAND_ORCHESTRATION_EVIDENCE.md`.
+
 ## Development checks
 
 ```powershell
@@ -93,4 +123,4 @@ cd backend
 go test ./...
 ```
 
-Environment variables used by services include `GATEWAY_PORT`, `ENGINE_PORT`, `KAFKA_BROKER_URL`, `REDIS_URL`, `POSTGRES_URL`, `DEV_PLATFORM_ADMIN_TOKEN`, `DEVICE_STALE_AFTER`, `DEVICE_OFFLINE_AFTER`, `OFFLINE_SCAN_INTERVAL`, `CONNECTION_TICKET_TTL`, `OUTBOX_BATCH_SIZE`, and `OUTBOX_POLL_INTERVAL`.
+Environment variables used by services include `GATEWAY_PORT`, `ENGINE_PORT`, `KAFKA_BROKER_URL`, `REDIS_URL`, `POSTGRES_URL`, `DEV_PLATFORM_ADMIN_TOKEN`, `DEVICE_STALE_AFTER`, `DEVICE_OFFLINE_AFTER`, `OFFLINE_SCAN_INTERVAL`, `CONNECTION_TICKET_TTL`, `OUTBOX_BATCH_SIZE`, `OUTBOX_POLL_INTERVAL`, `GATEWAY_ID`, `CONNECTION_LEASE_TTL`, `COMMAND_ACK_TIMEOUT`, `COMMAND_RECONCILE_INTERVAL`, and `COMMAND_MAX_ATTEMPTS`.

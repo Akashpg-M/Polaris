@@ -180,6 +180,42 @@ export default function SwarmTester() {
 	const bootStartedAt = Date.now();
 	const deviceBootId = `browser-${nodeId}-${bootStartedAt}`;
 	let sequenceNumber = 0;
+	let lastCommandSequence = 0;
+	const completedCommands = new Map<string, { ack: string; result: string }>();
+
+	ws.onmessage = (event) => {
+	  if (typeof event.data !== 'string') return;
+	  try {
+		const command = JSON.parse(event.data);
+		if (command.frame_type !== 'COMMAND') return;
+		const previous = completedCommands.get(command.command_id);
+		if (previous) {
+		  ws.send(previous.ack);
+		  ws.send(previous.result);
+		  addLog(`Duplicate ${command.command_id} deduplicated by ${nodeId}`, 'warning');
+		  return;
+		}
+		let ackStatus = 'ACCEPTED';
+		let reason = '';
+		if (Date.now() > Date.parse(command.expires_at)) { ackStatus = 'EXPIRED'; reason = 'command expired before receipt'; }
+		else if (command.sequence_number <= lastCommandSequence) { ackStatus = 'REJECTED'; reason = 'out-of-order command sequence'; }
+		const ack = JSON.stringify({ frame_type:'COMMAND_ACK', command_id:command.command_id, sequence_number:command.sequence_number, status:ackStatus, received_at:new Date().toISOString(), reason });
+		ws.send(ack);
+		if (ackStatus !== 'ACCEPTED') return;
+		lastCommandSequence = command.sequence_number;
+		if ((command.command_type === 'RELOCATE' || command.command_type === 'NAVIGATE') && command.payload) {
+		  if (typeof command.payload.lat === 'number') lat = command.payload.lat;
+		  if (typeof command.payload.lon === 'number') lon = command.payload.lon;
+		}
+		setTimeout(() => {
+		  if (ws.readyState !== WebSocket.OPEN) return;
+		  const result = JSON.stringify({ frame_type:'COMMAND_RESULT', command_id:command.command_id, sequence_number:command.sequence_number, status:'SUCCEEDED', completed_at:new Date().toISOString(), result:{ execution_count:1 } });
+		  completedCommands.set(command.command_id, { ack, result });
+		  ws.send(result);
+		  addLog(`${nodeId} completed ${command.command_type} (${command.command_id})`, 'success');
+		}, 250);
+	  } catch { addLog(`${nodeId} received an invalid server frame`, 'danger'); }
+	};
 
     ws.onopen = () => {
       addLog(`Uplink Mapped: Actor instance generated for ${nodeId}`, 'success');

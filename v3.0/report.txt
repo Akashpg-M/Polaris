@@ -1,3 +1,18 @@
+Polaris is an extensible edge-device orchestration control plane that maintains trusted digital representations of connected devices, matches capabilities to operational intent, and reliably coordinates physical or digital actions. Domain-specific intelligence such as mobility, spatial routing, sensing, or edge-AI execution is provided through orchestration capability modules rather than being embedded in the core.
+
+above is the polaris vision
+
+
+
+
+
+
+
+
+
+
+
+
 Recommended title
 
 For GitHub and portfolio:

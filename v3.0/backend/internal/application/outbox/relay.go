@@ -10,7 +10,13 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-const LifecycleTopic = "device.lifecycle.v1"
+const (
+	LifecycleTopic     = "device.lifecycle.v1"
+	TaskTopic          = "task.lifecycle.v1"
+	CommandTopic       = "device.command.v1"
+	CommandAckTopic    = "device.command.ack.v1"
+	CommandResultTopic = "device.command.result.v1"
+)
 
 type Relay struct {
 	store    *repository.RegistryStore
@@ -24,7 +30,7 @@ func New(store *repository.RegistryStore, broker string, batch int, interval tim
 	if batch < 1 {
 		batch = 100
 	}
-	return &Relay{store: store, writer: &kafka.Writer{Addr: kafka.TCP(broker), Topic: LifecycleTopic, Balancer: &kafka.Hash{}}, batch: batch, interval: interval, done: make(chan struct{})}
+	return &Relay{store: store, writer: &kafka.Writer{Addr: kafka.TCP(broker), Balancer: &kafka.Hash{}}, batch: batch, interval: interval, done: make(chan struct{})}
 }
 func (r *Relay) Start(ctx context.Context) {
 	defer close(r.done)
@@ -50,8 +56,8 @@ func (r *Relay) flush(ctx context.Context) {
 		return
 	}
 	for _, e := range events {
-		value, _ := json.Marshal(map[string]interface{}{"event_id": e.EventID, "event_type": e.EventType, "schema_version": 1, "tenant_id": e.TenantID, "payload": json.RawMessage(e.Payload)})
-		if err = r.writer.WriteMessages(ctx, kafka.Message{Key: []byte(e.TenantID + ":" + e.EventID), Value: value}); err != nil {
+		topic, key, value := route(e)
+		if err = r.writer.WriteMessages(ctx, kafka.Message{Topic: topic, Key: []byte(key), Value: value}); err != nil {
 			_ = r.store.MarkOutboxFailed(ctx, e.OutboxID, err.Error())
 			continue
 		}
@@ -59,4 +65,28 @@ func (r *Relay) flush(ctx context.Context) {
 			slog.Error("outbox publish marker failed; event will replay", "event_id", e.EventID, "error", err)
 		}
 	}
+}
+
+func route(e repository.OutboxEvent) (string, string, []byte) {
+	key := e.TenantID + ":" + e.EventID
+	value, _ := json.Marshal(map[string]interface{}{"event_id": e.EventID, "event_type": e.EventType, "schema_version": 1, "tenant_id": e.TenantID, "payload": json.RawMessage(e.Payload)})
+	if e.EventType == "command.created.v1" || e.EventType == "command.retry.requested.v1" {
+		var envelope struct {
+			DeviceID string `json:"device_id"`
+		}
+		if json.Unmarshal(e.Payload, &envelope) == nil && envelope.DeviceID != "" {
+			key = e.TenantID + ":" + envelope.DeviceID
+		}
+		return CommandTopic, key, e.Payload
+	}
+	if e.EventType == "command.acknowledged.v1" {
+		return CommandAckTopic, key, value
+	}
+	if e.EventType == "command.result.v1" {
+		return CommandResultTopic, key, value
+	}
+	if len(e.EventType) >= 5 && e.EventType[:5] == "task." {
+		return TaskTopic, key, value
+	}
+	return LifecycleTopic, key, value
 }

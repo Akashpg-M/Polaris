@@ -79,6 +79,10 @@ func Can(role Role, permission string) bool {
 		return role == TenantAdmin || role == Operator || role == Viewer
 	case "mutate":
 		return role == TenantAdmin
+	case "orchestrate":
+		return role == TenantAdmin || role == Operator
+	case "admin_retry":
+		return role == TenantAdmin
 	case "audit":
 		return role == TenantAdmin
 	default:

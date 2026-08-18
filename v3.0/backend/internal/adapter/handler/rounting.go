@@ -37,7 +37,7 @@ func (h *RoutingHandler) CalculateRoute(c *gin.Context) {
 	// 1. Snap GPS to Graph Nodes
 	srcNode, err := h.network.GetNearestIntersection(srcLat, srcLon)
 	tgtNode, errTgt := h.network.GetNearestIntersection(tgtLat, tgtLon)
-	
+
 	if err != nil || errTgt != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "road network offline"})
 		return

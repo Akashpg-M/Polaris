@@ -28,4 +28,7 @@ func TestRolePermissions(t *testing.T) {
 	if !Can(Viewer, "read") || Can(Viewer, "audit") {
 		t.Fatal("viewer permission matrix violated")
 	}
+	if !Can(Operator, "orchestrate") || Can(Viewer, "orchestrate") || Can(Operator, "admin_retry") || !Can(TenantAdmin, "admin_retry") {
+		t.Fatal("orchestration permission matrix violated")
+	}
 }
