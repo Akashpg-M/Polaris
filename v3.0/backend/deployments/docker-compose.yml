@@ -32,6 +32,8 @@ services:
           rpk topic create telemetry.dead-letter.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
           rpk topic create polaris.phase1.initialized --partitions 1 --replicas 1 -X brokers=redpanda:29092
         fi
+        rpk topic create device.lifecycle.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
+        rpk topic create device.connectivity.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
   postgres:
     image: postgis/postgis:16-3.4
     environment:
@@ -65,10 +67,12 @@ services:
       GATEWAY_PORT: "6080"
       KAFKA_BROKER_URL: redpanda:29092
       REDIS_URL: redis://redis:6379/0
+      POSTGRES_URL: postgres://polaris_user:polaris_password@postgres:5432/polaris_core?sslmode=disable
     ports: ["6080:6080"]
     depends_on:
       kafka-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
+      postgres-migrate: { condition: service_completed_successfully }
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:6080/readyz"]
       interval: 5s
@@ -84,6 +88,13 @@ services:
       KAFKA_BROKER_URL: redpanda:29092
       REDIS_URL: redis://redis:6379/0
       POSTGRES_URL: postgres://polaris_user:polaris_password@postgres:5432/polaris_core?sslmode=disable
+      DEV_PLATFORM_ADMIN_TOKEN: ${DEV_PLATFORM_ADMIN_TOKEN:-}
+      DEVICE_STALE_AFTER: ${DEVICE_STALE_AFTER:-30s}
+      DEVICE_OFFLINE_AFTER: ${DEVICE_OFFLINE_AFTER:-90s}
+      OFFLINE_SCAN_INTERVAL: ${OFFLINE_SCAN_INTERVAL:-10s}
+      CONNECTION_TICKET_TTL: ${CONNECTION_TICKET_TTL:-30s}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-100}
+      OUTBOX_POLL_INTERVAL: ${OUTBOX_POLL_INTERVAL:-500ms}
     ports: ["6081:6081"]
     depends_on:
       kafka-init: { condition: service_completed_successfully }

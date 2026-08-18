@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
 	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
+	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,12 +19,12 @@ func NewMatchHandler(engine *spatial.Engine) *MatchHandler {
 
 // GetNearestNodes handles GET /api/v1/nodes/match
 func (h *MatchHandler) GetNearestNodes(c *gin.Context) {
-	tenantID := c.Query("tenant_id") 
-	if tenantID == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing tenant identity"})
-			return
+	tenantID, ok := tenantFor(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing tenant identity"})
+		return
 	}
-	
+
 	lat, errLat := strconv.ParseFloat(c.Query("lat"), 64)
 	lon, errLon := strconv.ParseFloat(c.Query("lon"), 64)
 	radius, errRad := strconv.ParseFloat(c.DefaultQuery("radius_km", "10.0"), 64)
@@ -35,7 +35,7 @@ func (h *MatchHandler) GetNearestNodes(c *gin.Context) {
 		return
 	}
 
-	matches := h.engine.FindNearest(tenantID, lat, lon, radius, pb.NodeType(assetClass))	
+	matches := h.engine.FindNearest(tenantID, lat, lon, radius, pb.NodeType(assetClass))
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"count":  len(matches),

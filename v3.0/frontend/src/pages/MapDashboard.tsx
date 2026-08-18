@@ -63,9 +63,14 @@ export default function MapDashboard() {
 
     // 1. ASYMMETRIC STREAM: WebSocket Real-Time Downstream Connection
     let ws: WebSocket | null = null;
-    const connectStreamingGateway = () => {
+	let disposed=false;
+    const connectStreamingGateway = async () => {
+	  const operatorToken=localStorage.getItem('polaris_operator_token');if(!operatorToken||disposed)return;
+	  const engineApiUrl=import.meta.env.VITE_ENGINE_API||'http://localhost:6081/api/v1';
+	  const ticketResponse=await fetch(`${engineApiUrl}/dashboard-ticket`,{method:'POST',headers:{Authorization:`Bearer ${operatorToken}`,'X-Tenant-ID':'alpha_logistics','Content-Type':'application/json'},body:'{}'});if(!ticketResponse.ok||disposed)return;
+	  const ticket=(await ticketResponse.json()).data.ticket;
       const gatewayWsUrl = import.meta.env.VITE_GATEWAY_WS || 'ws://localhost:6080';
-      ws = new WebSocket(`${gatewayWsUrl}/ws/dashboard`);
+	  ws = new WebSocket(`${gatewayWsUrl}/ws/dashboard?ticket=${encodeURIComponent(ticket)}`);
 
       ws.onmessage = (event) => {
         try {
@@ -122,7 +127,11 @@ export default function MapDashboard() {
     const fetchPredictedZones = async () => {
       try {
         const engineApiUrl = import.meta.env.VITE_ENGINE_API || 'http://localhost:6081/api/v1';
-        const res = await fetch(`${engineApiUrl}/zones/predicted`);
+		const operatorToken = localStorage.getItem('polaris_operator_token');
+		if (!operatorToken) return;
+        const res = await fetch(`${engineApiUrl}/zones/predicted`, {
+		  headers: { Authorization: `Bearer ${operatorToken}`, 'X-Tenant-ID': 'alpha_logistics' }
+		});
         const json = await res.json();
 
         const zones: ZonePrediction[] = Array.isArray(json.data) ? json.data : [];
@@ -162,6 +171,7 @@ export default function MapDashboard() {
     }, 5000);
 
     return () => {
+	  disposed=true;
       if (ws) ws.close();
       clearInterval(i2);
       clearInterval(janitorInterval);

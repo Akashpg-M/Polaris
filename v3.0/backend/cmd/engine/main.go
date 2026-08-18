@@ -7,15 +7,19 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/Akashpg-M/polaris/backend/algo_/graph"
 	"github.com/Akashpg-M/polaris/backend/algo_/logger"
 	"github.com/Akashpg-M/polaris/backend/internal/adapter/handler"
+	"github.com/Akashpg-M/polaris/backend/internal/adapter/repository"
 	"github.com/Akashpg-M/polaris/backend/internal/application/orchestrator"
+	"github.com/Akashpg-M/polaris/backend/internal/application/outbox"
 	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
 	"github.com/Akashpg-M/polaris/backend/internal/application/stream"
+	"github.com/Akashpg-M/polaris/backend/internal/application/twin"
 	"github.com/Akashpg-M/polaris/backend/internal/config"
 	"github.com/Akashpg-M/polaris/backend/internal/infra/osm"
 	redisinfra "github.com/Akashpg-M/polaris/backend/internal/infra/redis"
@@ -66,6 +70,14 @@ func main() {
 		panic("Cannot start engine without Redis: " + err.Error())
 	}
 	commander := &RedisCommander{client: redisClient}
+	registryStore, err := repository.NewRegistryStore(cfg.DB.URL)
+	if err != nil {
+		panic("Cannot start registry: " + err.Error())
+	}
+	defer registryStore.Close()
+	if err = registryStore.BootstrapPlatformAdmin(ctx, os.Getenv("DEV_PLATFORM_ADMIN_TOKEN")); err != nil {
+		panic("Cannot bootstrap development operator: " + err.Error())
+	}
 	kafkaConsumer := stream.NewKafkaConsumer(kafkaBroker, engine, redisClient)
 	go kafkaConsumer.Start(ctx, "engine-node-1")
 	archiver, err := stream.NewKafkaPostgresArchiver(kafkaBroker, cfg.DB.URL)
@@ -77,6 +89,10 @@ func main() {
 	if roadNetwork != nil {
 		go stream.NewTrafficAnalyzer(kafkaBroker, roadNetwork).Start(ctx)
 	}
+	outboxRelay := outbox.New(registryStore, kafkaBroker, envInt("OUTBOX_BATCH_SIZE", 100), envDuration("OUTBOX_POLL_INTERVAL", 500*time.Millisecond))
+	go outboxRelay.Start(ctx)
+	connectivityDetector := twin.NewDetector(redisClient, kafkaBroker, envDuration("DEVICE_STALE_AFTER", 30*time.Second), envDuration("DEVICE_OFFLINE_AFTER", 90*time.Second), envDuration("OFFLINE_SCAN_INTERVAL", 10*time.Second))
+	go connectivityDetector.Start(ctx)
 
 	predictiveStrategy, err := orchestrator.NewPredictiveZoneStrategy(cfg.DB.URL)
 	if err != nil {
@@ -91,16 +107,24 @@ func main() {
 	// 3. Setup Router
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
-	router.Use(gin.Recovery(), cors.Default())
+	router.Use(gin.Recovery(), cors.New(cors.Config{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete, http.MethodOptions},
+		AllowHeaders: []string{"Origin", "Content-Type", "Authorization", "X-Tenant-ID"},
+	}))
 
 	matchHandler := handler.NewMatchHandler(engine)
 	routingHandler := handler.NewRoutingHandler(roadNetwork)
 
 	api := router.Group("/api/v1")
 	{
-		api.GET("/nodes/match", matchHandler.GetNearestNodes)
-		api.GET("/routes/calculate", routingHandler.CalculateRoute)
-		api.GET("/zones/predicted", func(c *gin.Context) {
+		registryAPI := handler.NewRegistryAPI(registryStore, redisClient, envDuration("DEVICE_STALE_AFTER", 30*time.Second), envDuration("DEVICE_OFFLINE_AFTER", 90*time.Second), envDuration("CONNECTION_TICKET_TTL", 30*time.Second))
+		registryAPI.Register(api)
+		protected := api.Group("")
+		protected.Use(registryAPI.Middleware("read"))
+		protected.GET("/nodes/match", matchHandler.GetNearestNodes)
+		protected.GET("/routes/calculate", routingHandler.CalculateRoute)
+		protected.GET("/zones/predicted", func(c *gin.Context) {
 			if predictiveStrategy != nil {
 				c.JSON(200, gin.H{"status": "success", "data": predictiveStrategy.GetTargetZones(context.Background())})
 			} else {
@@ -124,6 +148,10 @@ func main() {
 		}
 		if archiver == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "dependency": "postgres_archiver"})
+			return
+		}
+		if err := registryStore.DB.PingContext(probeCtx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "dependency": "registry", "error": err.Error()})
 			return
 		}
 		if err := archiver.Ready(probeCtx); err != nil {
@@ -164,4 +192,21 @@ func main() {
 	}
 	redisClient.Close()
 	slog.Info("Engine safely terminated.")
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if raw := os.Getenv(key); raw != "" {
+		if v, err := time.ParseDuration(raw); err == nil {
+			return v
+		}
+	}
+	return fallback
+}
+func envInt(key string, fallback int) int {
+	if raw := os.Getenv(key); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil {
+			return v
+		}
+	}
+	return fallback
 }

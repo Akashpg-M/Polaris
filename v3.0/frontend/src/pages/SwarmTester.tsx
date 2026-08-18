@@ -158,14 +158,28 @@ export default function SwarmTester() {
     }
   };
 
-  const bootDrone = (nodeId: string) => {
-    const ws = new WebSocket("ws://localhost:6080/ws/telemetry");
+  const bootDrone = async (nodeId: string) => {
+    const operatorToken = localStorage.getItem('polaris_operator_token');
+    if (!operatorToken) { addLog('Set polaris_operator_token in localStorage before launching authenticated devices', 'danger'); return; }
+    const headers = { Authorization: `Bearer ${operatorToken}`, 'X-Tenant-ID': 'alpha_logistics', 'Content-Type': 'application/json' };
+    const create = await fetch('http://localhost:6081/api/v1/devices', { method:'POST', headers, body:JSON.stringify({device_id:nodeId,device_type_id:'delivery_drone',display_name:nodeId}) });
+    if (!create.ok && create.status !== 409) { addLog(`Registry rejected ${nodeId}`, 'danger'); return; }
+    await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/activate`, { method:'POST', headers });
+    const credential = await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/credentials`, { method:'POST', headers, body:'{}' });
+    if (!credential.ok) { addLog(`Credential issue failed for ${nodeId}`, 'danger'); return; }
+    const ticketResponse = await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/connection-ticket`, { method:'POST', headers, body:'{}' });
+    if (!ticketResponse.ok) { addLog(`Ticket issue failed for ${nodeId}`, 'danger'); return; }
+    const ticket = (await ticketResponse.json()).data.ticket;
+    const ws = new WebSocket(`ws://localhost:6080/ws/telemetry?ticket=${encodeURIComponent(ticket)}`);
     ws.binaryType = "arraybuffer";
     
     let lat = 13.0067 + (Math.random() * 0.02 - 0.01);
     let lon = 80.2206 + (Math.random() * 0.02 - 0.01);
     let velocityMps = 12.0 + Math.random() * 8;
     let headingDeg = Math.floor(Math.random() * 360);
+	const bootStartedAt = Date.now();
+	const deviceBootId = `browser-${nodeId}-${bootStartedAt}`;
+	let sequenceNumber = 0;
 
     ws.onopen = () => {
       addLog(`Uplink Mapped: Actor instance generated for ${nodeId}`, 'success');
@@ -173,10 +187,12 @@ export default function SwarmTester() {
       
       const timer = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
+		  sequenceNumber += 1;
           const radians = (headingDeg * Math.PI) / 180;
           lat += (velocityMps * Math.cos(radians)) / 111000;
           lon += (velocityMps * Math.sin(radians)) / (111000 * Math.cos(lat * Math.PI / 180));
 
+		  const observedAt = Date.now();
           const binaryBuffer = serializeProtobufTelemetry({
             id: nodeId,
             tenantId: "alpha_logistics",
@@ -187,7 +203,8 @@ export default function SwarmTester() {
             velocityMps,
             headingDeg,
             energyPercent: Math.floor(85 + Math.random() * 15),
-            timestamp: Date.now()
+			timestamp: observedAt,
+			deviceBootId, sequenceNumber, bootStartedAt, observedAt, schemaVersion: 1
           });
 
           ws.send(new Uint8Array(binaryBuffer));

@@ -73,3 +73,82 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_predictive ON telemetry_history(recorde
 
 -- NEW V3 INDEX: A GIST index makes PostGIS spatial queries (like bounding boxes) lightning fast
 CREATE INDEX IF NOT EXISTS idx_telemetry_geom ON telemetry_history USING GIST (geom);
+
+-- Phase 2: durable registry, credentials, audit and transactional outbox.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TABLE IF NOT EXISTS tenants (
+  tenant_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('ACTIVE','SUSPENDED','DEACTIVATED')),
+  metadata JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS projects (
+  project_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id), name TEXT NOT NULL,
+  description TEXT, status TEXT NOT NULL DEFAULT 'ACTIVE', metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(tenant_id,name)
+);
+CREATE TABLE IF NOT EXISTS device_types (
+  device_type_id TEXT PRIMARY KEY, display_name TEXT NOT NULL, category TEXT NOT NULL, description TEXT,
+  telemetry_schema TEXT NOT NULL DEFAULT 'spatial.v1', metadata JSONB NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS devices (
+  tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id), device_id TEXT NOT NULL, project_id UUID REFERENCES projects(project_id),
+  device_type_id TEXT NOT NULL REFERENCES device_types(device_type_id), display_name TEXT NOT NULL,
+  lifecycle_status TEXT NOT NULL CHECK(lifecycle_status IN ('REGISTERED','ACTIVE','SUSPENDED','DECOMMISSIONED')),
+  firmware_version TEXT, software_version TEXT, model_version TEXT, metadata JSONB NOT NULL DEFAULT '{}',
+  registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), deactivated_at TIMESTAMPTZ,
+  PRIMARY KEY(tenant_id,device_id)
+);
+CREATE TABLE IF NOT EXISTS capabilities (
+  capability_id TEXT PRIMARY KEY, display_name TEXT NOT NULL, description TEXT, schema JSONB NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS device_capabilities (
+  tenant_id TEXT NOT NULL, device_id TEXT NOT NULL, capability_id TEXT NOT NULL REFERENCES capabilities(capability_id),
+  configuration JSONB NOT NULL DEFAULT '{}', enabled BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(tenant_id,device_id,capability_id), FOREIGN KEY(tenant_id,device_id) REFERENCES devices(tenant_id,device_id)
+);
+CREATE TABLE IF NOT EXISTS device_credentials (
+  credential_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, device_id TEXT NOT NULL, token_prefix TEXT NOT NULL UNIQUE,
+  token_hash BYTEA NOT NULL, status TEXT NOT NULL CHECK(status IN ('ACTIVE','REVOKED','EXPIRED')),
+  issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ,
+  FOREIGN KEY(tenant_id,device_id) REFERENCES devices(tenant_id,device_id)
+);
+CREATE TABLE IF NOT EXISTS operator_api_keys (
+  api_key_id UUID PRIMARY KEY, tenant_id TEXT REFERENCES tenants(tenant_id), name TEXT NOT NULL, token_prefix TEXT NOT NULL UNIQUE,
+  token_hash BYTEA NOT NULL, role TEXT NOT NULL CHECK(role IN ('PLATFORM_ADMIN','TENANT_ADMIN','OPERATOR','VIEWER')),
+  status TEXT NOT NULL CHECK(status IN ('ACTIVE','REVOKED','EXPIRED')), issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS connection_tickets (
+  ticket_prefix TEXT PRIMARY KEY, ticket_hash BYTEA NOT NULL, tenant_id TEXT NOT NULL, device_id TEXT NOT NULL,
+  credential_id UUID NOT NULL, expires_at TIMESTAMPTZ NOT NULL, consumed_at TIMESTAMPTZ,
+  FOREIGN KEY(tenant_id,device_id) REFERENCES devices(tenant_id,device_id)
+);
+CREATE TABLE IF NOT EXISTS operator_connection_tickets (
+  ticket_prefix TEXT PRIMARY KEY, ticket_hash BYTEA NOT NULL, api_key_id UUID NOT NULL,
+  tenant_id TEXT, role TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL, consumed_at TIMESTAMPTZ,
+  FOREIGN KEY(api_key_id) REFERENCES operator_api_keys(api_key_id)
+);
+CREATE TABLE IF NOT EXISTS outbox_events (
+  outbox_id UUID PRIMARY KEY, aggregate_type TEXT NOT NULL, aggregate_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+  event_id TEXT NOT NULL UNIQUE, event_type TEXT NOT NULL, schema_version INTEGER NOT NULL, payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING', attempt_count INTEGER NOT NULL DEFAULT 0, next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), published_at TIMESTAMPTZ, last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(status,next_attempt_at,created_at);
+CREATE TABLE IF NOT EXISTS audit_events (
+  audit_id UUID PRIMARY KEY, tenant_id TEXT, actor_type TEXT NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL,
+  resource_type TEXT NOT NULL, resource_id TEXT NOT NULL, request_id TEXT, outcome TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_tenant_time ON audit_events(tenant_id,created_at DESC);
+
+INSERT INTO device_types(device_type_id,display_name,category,description) VALUES
+ ('delivery_drone','Delivery drone','MOBILE','Spatial delivery aircraft'),
+ ('ground_robot','Ground robot','MOBILE','Autonomous ground robot'),
+ ('connected_vehicle','Connected vehicle','MOBILE','Connected road vehicle'),
+ ('fixed_iot_sensor','Fixed IoT sensor','STATIC','Fixed telemetry sensor') ON CONFLICT DO NOTHING;
+INSERT INTO capabilities(capability_id,display_name,description) VALUES
+ ('navigate','Navigate','Autonomous navigation'),
+ ('receive_relocation_command','Receive relocation command','Accept relocation directives'),
+ ('capture_image','Capture image','Capture still imagery'),
+ ('measure_temperature','Measure temperature','Report ambient temperature') ON CONFLICT DO NOTHING;

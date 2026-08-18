@@ -50,7 +50,9 @@ redis.call('HSET', KEYS[1],
   'sequence_number', ARGV[3],
   'event_id', ARGV[4],
   'reported_state', ARGV[5],
-  'last_seen_at', ARGV[6])
+  'last_seen_at', ARGV[6],
+  'connectivity_status', 'ONLINE')
+redis.call('ZADD', KEYS[3], ARGV[6], ARGV[8])
 redis.call('PUBLISH', ARGV[7], ARGV[5])
 return classification
 `)
@@ -79,8 +81,8 @@ func (p *RedisProjector) Apply(ctx context.Context, e *events.TelemetryEnvelope)
 		return "", err
 	}
 	key := fmt.Sprintf("polaris:twin:%s:%s", e.TenantID, e.DeviceID)
-	result, err := latestStateScript.Run(ctx, p.client, []string{key, key + ":retired_boots"},
-		e.DeviceBootID, e.BootStartedAt, e.SequenceNumber, e.EventID, string(data), time.Now().UTC().UnixMilli(), DashboardUpdatesChannel).Text()
+	result, err := latestStateScript.Run(ctx, p.client, []string{key, key + ":retired_boots", "polaris:devices:last-seen"},
+		e.DeviceBootID, e.BootStartedAt, e.SequenceNumber, e.EventID, string(data), time.Now().UTC().UnixMilli(), DashboardUpdatesChannel, e.TenantID+":"+e.DeviceID).Text()
 	return spatial.Classification(result), err
 }
 

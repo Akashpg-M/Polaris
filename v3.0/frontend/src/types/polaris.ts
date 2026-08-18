@@ -29,10 +29,16 @@ export function serializeProtobufTelemetry(data: {
   headingDeg: number;
   energyPercent: number;
   timestamp: number;
+	deviceBootId: string;
+	sequenceNumber: number;
+	bootStartedAt: number;
+	observedAt: number;
+	schemaVersion?: number;
 }): Uint8Array {
   const encoder = new TextEncoder();
   const idBytes = encoder.encode(data.id);
   const tenantBytes = encoder.encode(data.tenantId);
+	const bootBytes = encoder.encode(data.deviceBootId);
 
   // Allocate a safe upper-bound workspace buffer
   const buffer = new ArrayBuffer(256);
@@ -102,6 +108,15 @@ export function serializeProtobufTelemetry(data: {
   // Field 10: int64 timestamp (Wire Type 0: Varint)
   view.setUint8(offset++, (10 << 3) | 0);
   writeBigVarint(BigInt(data.timestamp));
+
+	// Phase 1/2 device-owned ordering identity.
+	view.setUint8(offset++, (11 << 3) | 2);
+	writeVarint(bootBytes.length);
+	for (let i = 0; i < bootBytes.length; i++) view.setUint8(offset++, bootBytes[i]);
+	view.setUint8(offset++, (12 << 3) | 0); writeBigVarint(BigInt(data.sequenceNumber));
+	view.setUint8(offset++, (13 << 3) | 0); writeBigVarint(BigInt(data.bootStartedAt));
+	view.setUint8(offset++, (14 << 3) | 0); writeBigVarint(BigInt(data.observedAt));
+	view.setUint8(offset++, (15 << 3) | 0); writeVarint(data.schemaVersion ?? 1);
 
   // Slice out the exact compiled bytecode envelope
   return new Uint8Array(buffer, 0, offset);

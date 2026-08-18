@@ -214,3 +214,1466 @@ File: commit_message.txtPlaintextfeat(cluster): implement Polaris 4.0 event-sour
 
 
 Here is the refactored, production-grade description for your resume. It transforms the older, reactive database-driven focus into the advanced distributed control system, actor model, and simulation-validated architecture built in Polaris 4.0.🛠️ Refactored Resume SectionDistributed IoT Control & Routing Engine (Polaris 4.0) | Golang, React, TypeScript, Redis, NATS/Kafka, WebSockets, DockerSkills: Distributed Control Systems, Actor Model, Event Sourcing, Control Loop Stabilization, Low-Latency Simulation.Architected a state-isolated distributed control platform using Go-native Actor Model boundaries and bounded FIFO mailboxes, handling $250+$ high-frequency edge asset streams while enforcing strict backpressure limits.Designed an event-sourced telemetry ingestion pipeline that converts raw binary stream payloads into immutable domain events, eliminating shared global mutable state and thread-lock contention across spatial nodes.Built a low-latency, in-memory spatial routing engine utilizing QuadTree indexing and versioned graph snapshots, maintaining $O(1)$ lookup performance and sub-15ms spatial calculations under intense load.Implemented a mathematical Hysteresis Filter layer leveraging Exponential Moving Averages (EMA) and a strict step-buffer check, completely eliminating routing path oscillations and telemetry feedback-loop vibrations.Engineered an asynchronous Cellular Automata (CA) simulation gatekeeper that isolates regional geographic boundary snapshots to stress-test fleet routing overrides, evaluating risk factors within a hard real-time execution deadline of $\le 15\text{ ms}$.Authored transactional supervisor recovery models validating $100\%$ state reconstruction accuracy via historical event log replays, ensuring high partition tolerance and zero-data-loss node self-healing.🔍 Key Enhancements MadeShifted Focus from Storage to Compute Boundaries: Changed "Redis Streams + Postgres archival" to Actor Model boundaries and Event Sourcing. This demonstrates your knowledge of advanced distributed systems design patterns used to scale massive traffic meshes without deadlocks.Highlighted Feedback Loop Control Math: Adding Hysteresis Dampening and EMA filtering shows recruiters you understand the complex control challenges that emerge when AI predictions interact with physical assets in real time.Emphasized Real-Time Simulation Gating: Showcasing the Cellular Automata runline layer proves you can design high-performance safety barriers that validate complex cluster changes before committing them to real-world edge hardware.
+
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+Phase 1 turns Polaris from a working happy-path telemetry pipeline into a failure-aware event-processing system.
+
+The central guarantee is now:
+
+Polaris may process the same Kafka record more than once, but processing it again does not create incorrect side effects.
+
+That is the meaning of:
+
+At-least-once delivery + idempotent consumers
+
+1. Updated Phase 1 architecture
+
+
+
+The same Kafka event is processed independently by two consumer groups:
+
+polaris_engine_group builds operational, low-latency state.
+
+polaris_archive_group stores historical telemetry.
+
+This separation is important because spatial processing and archival have different latency and failure characteristics.
+
+2. Complete event flow
+
+Step 1 — Device creates telemetry
+
+The device sends a binary Protobuf SpatialObject frame containing:
+
+Tenant ID
+
+Device ID
+
+Device type
+
+Device boot ID
+
+Sequence number
+
+Observed timestamp
+
+Latitude and longitude
+
+Velocity
+
+Battery
+
+Operational state
+
+The newly added identity fields are especially important:
+
+device_boot_id
+
+sequence_number
+
+Why boot ID is required
+
+Suppose a device sends:
+
+Boot A: sequence 1, 2, 3, ..., 500
+
+The device then restarts and resets its counter:
+
+Boot B: sequence 1
+
+If Polaris used only sequence_number, Boot B sequence 1 would appear older than Boot A sequence 500.
+
+The boot ID divides telemetry into separate device executions:
+
+device identity
+
+├── Boot A: 1...500
+
+└── Boot B: 1...n
+
+Why sequence number is required
+
+Timestamps alone are unreliable because:
+
+Device clocks can be wrong.
+
+Multiple events can have identical timestamps.
+
+Network delays can change arrival order.
+
+Time synchronization may drift.
+
+Sequence numbers provide explicit ordering within one device boot.
+
+3. Gateway validation
+
+Before publishing anything to Kafka, the gateway validates the frame.
+
+Structural validation
+
+It checks:
+
+Binary WebSocket frame
+
+Maximum frame size
+
+Valid Protobuf
+
+Required fields
+
+Supported schema
+
+Valid message structure
+
+Oversized or malformed frames are rejected at the boundary.
+
+Identity validation
+
+It checks:
+
+Tenant ID format
+
+Device ID format
+
+Boot ID format
+
+Sequence number validity
+
+Identity consistency within the WebSocket connection
+
+Once a connection identifies itself as:
+
+alpha_logistics:DRONE-17
+
+it cannot later submit a frame as:
+
+another_tenant:DRONE-99
+
+This is connection identity binding. It does not yet replace full device authentication, but it prevents identity switching on an established connection.
+
+Domain validation
+
+It checks:
+
+Latitude range
+
+Longitude range
+
+Finite coordinates
+
+Battery range
+
+Non-negative/valid velocity
+
+Defined device type
+
+Valid timestamps
+
+Supported event schema
+
+Invalid data never enters the durable event stream.
+
+Why validation belongs in the gateway
+
+Rejecting invalid input at the perimeter prevents every downstream consumer from repeatedly handling obviously invalid data.
+
+Consumers still validate the canonical envelope because Kafka records may originate from:
+
+Previous software versions
+
+Administrative tools
+
+Tests
+
+Corrupted messages
+
+Future producers
+
+Therefore, Polaris applies defense in depth:
+
+Gateway validation
+
++
+
+Consumer validation
+
+4. Canonical telemetry envelope
+
+The gateway wraps the device’s SpatialObject in a platform-owned event envelope.
+
+Conceptually:
+
+{
+
+"event_id": "...",
+
+"event_type": "polaris.telemetry.observed",
+
+"schema_version": 1,
+
+"tenant_id": "alpha_logistics",
+
+"device_id": "DRONE-17",
+
+"device_boot_id": "boot-abc",
+
+"sequence_number": 42,
+
+"observed_at": "...",
+
+"ingested_at": "...",
+
+"correlation_id": "...",
+
+"causation_id": "...",
+
+"producer": "polaris-gateway",
+
+"trace": "...",
+
+"payload": {
+
+"spatial\_object": "..."
+
+}
+
+}
+
+Device-owned versus gateway-owned fields
+
+Device providesGateway provides
+
+
+
+Device ID
+
+Event ID
+
+Boot ID
+
+Ingested time
+
+Sequence number
+
+Producer identity
+
+Observed time
+
+Correlation ID
+
+Sensor/device state
+
+Causation ID
+
+Coordinates
+
+Trace metadata
+
+Battery and velocity
+
+Envelope schema version
+
+This prevents devices from controlling platform-level metadata.
+
+Event type
+
+The canonical event is:
+
+polaris.telemetry.observed
+
+The current Kafka topic remains:
+
+telemetry.ingress
+
+These represent different things:
+
+Topic: physical location in the event infrastructure.
+
+Event type: semantic meaning of the message.
+
+Multiple compatible event types can eventually share a topic, although keeping topics semantically focused is usually easier to operate.
+
+5. Deterministic event identity
+
+The event ID is derived from:
+
+tenant_id
+
++ device_id
+
++ device_boot_id
+
++ sequence_number
+
+For example:
+
+event_id = hash(
+
+"alpha\_logistics"
+
+\+ "DRONE-17"
+
+\+ "boot-abc"
+
+\+ "42"
+
+)
+
+Why deterministic identity matters
+
+Assume the device sends sequence 42. The gateway publishes it, but the acknowledgement is lost. The device retransmits sequence 42.
+
+If the gateway generated a random UUID each time:
+
+First attempt  → event_id A
+
+Second attempt → event_id B
+
+Consumers would treat them as different events.
+
+With deterministic identity:
+
+First attempt  → event_id X
+
+Second attempt → event_id X
+
+Every consumer can recognize the retransmission.
+
+Identity scope
+
+The combination is unique because:
+
+Tenant separates organizations.
+
+Device separates devices.
+
+Boot ID separates restarts.
+
+Sequence separates events within a boot.
+
+6. Kafka partitioning and ordering
+
+The Kafka key is:
+
+tenant_id:device_id
+
+For example:
+
+alpha_logistics:DRONE-17
+
+Kafka hashes this key and consistently selects one partition.
+
+Therefore:
+
+DRONE-17 sequence 40
+
+DRONE-17 sequence 41
+
+DRONE-17 sequence 42
+
+all enter the same partition.
+
+Kafka guarantees ordering within a partition, so consumers observe that device’s records in log order.
+
+Why H3 is no longer the key
+
+If telemetry were partitioned using H3:
+
+Device in H3 cell A → partition 0
+
+Device moves to H3 cell B → partition 2
+
+Kafka would no longer provide ordering across the movement.
+
+Now:
+
+Device identity → stable Kafka partition
+
+H3             → downstream spatial grouping
+
+This cleanly separates event ordering from geographic processing.
+
+Three partitions
+
+The ingress topic now contains three partitions. This enables parallel processing across different devices.
+
+Example:
+
+Partition 0 → devices A, D
+
+Partition 1 → devices B, E
+
+Partition 2 → devices C, F
+
+A single device remains in one partition, but different devices can be processed concurrently.
+
+The smoke vehicle was assigned to partition 2, demonstrating that the pipeline no longer assumes partition 0.
+
+7. Partition-local batching
+
+Each Kafka partition has an independent batch.
+
+A batch flushes when either condition is reached:
+
+batch size = 1,000 records
+
+OR
+
+batch age = 150 ms
+
+Why both conditions are necessary
+
+Size-only flushing is efficient at high throughput:
+
+1,000 records → one batch operation
+
+But under low traffic, a batch might never reach 1,000.
+
+The time deadline ensures low-volume telemetry is still processed:
+
+1 record → waits at most approximately 150 ms
+
+Why batches are partition-local
+
+A failure in partition 0 must not cause unsafe commits in partition 2.
+
+Each partition independently maintains:
+
+Buffered records
+
+Offset order
+
+Flush deadline
+
+Processing result
+
+Commit position
+
+This preserves Kafka’s partition-ordering model.
+
+8. Manual Kafka offset commits
+
+Kafka offsets represent consumer progress.
+
+Suppose a partition contains:
+
+Offset 20
+
+Offset 21
+
+Offset 22
+
+Offset 23
+
+Polaris processes them in order.
+
+If offsets 20 and 21 succeed but 22 fails:
+
+20 → terminal success
+
+21 → terminal success
+
+22 → failure
+
+23 → must not be committed past 22
+
+Polaris commits only the highest contiguous terminal offset.
+
+It cannot commit offset 23 because that would implicitly tell Kafka that 22 had also been handled.
+
+Terminal outcomes
+
+An event is terminal when it has been safely dealt with:
+
+Successfully applied
+
+Recognized as a duplicate
+
+Recognized as out of order
+
+Archived idempotently
+
+Published to the DLQ after permanent failure
+
+A transient failure is not terminal.
+
+Commit failure
+
+If processing succeeds but the offset commit fails:
+
+The batch remains retained.
+
+Kafka eventually redelivers it.
+
+Idempotent sinks make replay harmless.
+
+This is the core at-least-once behavior.
+
+9. Redis latest-state machine
+
+Redis stores the current operational state at:
+
+polaris:twin:{tenant_id}:{device_id}
+
+Example:
+
+polaris:twin:alpha_logistics:DRONE-17
+
+The hash contains:
+
+Event ID
+
+Boot ID
+
+Boot timestamp/version
+
+Sequence number
+
+Reported device state
+
+Last-seen time
+
+Position
+
+Battery
+
+Velocity
+
+Device type
+
+This is the initial reported-state portion of a digital twin.
+
+It is not yet a complete digital twin because it does not contain:
+
+Desired state
+
+Device registry metadata
+
+Capabilities
+
+Current task
+
+Command reconciliation
+
+Those belong to later phases.
+
+10. Atomic Redis Lua transition
+
+The Redis transition is performed through a Lua script.
+
+Without Lua, the consumer might do:
+
+1. Read existing sequence
+
+2. Compare in Go
+
+3. Write new state
+
+4. Publish dashboard event
+
+Two concurrent operations could interleave between those steps.
+
+Lua executes atomically inside Redis:
+
+Read
+
+→ Compare
+
+→ Classify
+
+→ Update
+
+→ Publish
+
+No other Redis command can interrupt the transition halfway through.
+
+State classifications
+
+ACCEPTED
+
+The event belongs to the active boot and has a higher sequence number.
+
+Stored: Boot A, sequence 10
+
+Incoming: Boot A, sequence 11
+
+Result: ACCEPTED
+
+State advances to sequence 11.
+
+DUPLICATE
+
+The event has already been applied.
+
+Stored: Boot A, sequence 11, event X
+
+Incoming: Boot A, sequence 11, event X
+
+Result: DUPLICATE
+
+No logical state change is needed.
+
+OUT_OF_ORDER
+
+An older event arrives after a newer event.
+
+Stored: Boot A, sequence 11
+
+Incoming: Boot A, sequence 9
+
+Result: OUT_OF_ORDER
+
+The latest state remains at sequence 11.
+
+NEW_BOOT
+
+The device has restarted with a legitimate new boot identity.
+
+Stored: Boot A, sequence 500
+
+Incoming: Boot B, sequence 1
+
+Result: NEW_BOOT
+
+Boot B becomes active even though its sequence starts again at 1.
+
+RETIRED_BOOT
+
+An event from a previous boot arrives after a newer boot became active.
+
+Stored: Boot B, sequence 5
+
+Incoming: Boot A, sequence 501
+
+Result: RETIRED_BOOT
+
+Boot A cannot regain ownership merely because its sequence number is higher.
+
+BOOT_CONFLICT
+
+The incoming boot information cannot be safely ordered against the current boot.
+
+Examples include:
+
+Inconsistent boot metadata
+
+Same boot start/version with a different boot ID
+
+Ambiguous boot transition
+
+The event is rejected from the latest-state path because silently choosing one boot could corrupt state.
+
+11. Durable-first, volatile-second ordering
+
+The spatial consumer now processes state in this order:
+
+1. Redis atomic decision
+
+2. In-memory spatial update
+
+3. Kafka offset commit
+
+Redis is treated as the durable/latest-state decision layer, while the in-memory spatial index is a rebuildable projection.
+
+Why Redis comes before memory
+
+Suppose the reverse order were used:
+
+Memory updated
+
+→ Redis unavailable
+
+→ Consumer crashes
+
+The match API might temporarily show state that the durable/latest-state projection never accepted.
+
+With Redis first:
+
+Redis unavailable
+
+→ Do not update spatial memory
+
+→ Do not commit Kafka offset
+
+→ Retry the same event
+
+The volatile read model never advances ahead of its durable decision state.
+
+Redis success followed by Kafka commit failure
+
+Consider:
+
+Redis accepts sequence 42
+
+→ Spatial state updates
+
+→ Kafka commit fails
+
+→ Consumer restarts
+
+→ Kafka replays sequence 42
+
+Redis classifies it as a duplicate/current replay.
+
+The restarted engine can safely rebuild its volatile in-memory state from the replay without creating another logical Redis transition.
+
+This is an important production pattern:
+
+Durable projection determines validity; volatile projections are reconstructable.
+
+12. In-memory spatial state
+
+The in-memory engine remains the low-latency read model used by:
+
+/api/v1/nodes/match
+
+It supports fast operational queries without querying PostgreSQL for every request.
+
+Phase 1 makes its update path version-aware:
+
+Accepted events advance state.
+
+Current replays can rebuild state after restart.
+
+Out-of-order events do not regress state.
+
+Retired boot events do not replace the active boot.
+
+Boot conflicts do not silently mutate state.
+
+This is a materialized spatial projection derived from the Kafka event stream and Redis decision state.
+
+13. Dashboard projection
+
+When Redis accepts a newer state, the Lua transition publishes a normalized dashboard event.
+
+The flow is:
+
+Redis latest-state update
+
+→ spatial/dashboard event
+
+→ gateway dashboard subscriber
+
+→ /ws/dashboard
+
+→ browser
+
+The event uses the frontend’s expected field names, avoiding the previous asset_id versus id mismatch.
+
+Redis Pub/Sub remains appropriate here because dashboard frames are transient:
+
+Missing one live frame is acceptable.
+
+Current state can be reconstructed from the Redis twin.
+
+The dashboard does not serve as a source of truth.
+
+Kafka remains the durable event transport.
+
+14. PostgreSQL idempotent archival
+
+The archive consumer belongs to a separate Kafka consumer group.
+
+It processes every telemetry record independently of the spatial consumer.
+
+New database identity columns
+
+Phase 1 adds envelope-related fields such as:
+
+Event ID
+
+Device boot ID
+
+Sequence number
+
+Observed time
+
+Ingested time
+
+Schema version
+
+Correlation metadata
+
+Unique event constraint
+
+UNIQUE (event_id)
+
+This prevents the same logical event from being stored twice.
+
+Unique device-sequence constraint
+
+UNIQUE (
+
+tenant\_id,
+
+device\_id,
+
+device\_boot\_id,
+
+sequence\_number
+
+)
+
+This provides a second semantic protection.
+
+Even if an application bug generated two event IDs for the same device sequence, the composite constraint would still reject the duplicate.
+
+ON CONFLICT DO NOTHING
+
+The insert behaves like this:
+
+New event       → row inserted
+
+Replayed event  → conflict detected
+
+             → no additional row
+
+             → treated as success
+
+A duplicate is not a system failure. It is expected under at-least-once delivery.
+
+Database success followed by commit failure
+
+PostgreSQL INSERT succeeds
+
+→ Kafka commit fails
+
+→ Record replays
+
+→ Unique index detects existing event
+
+→ ON CONFLICT DO NOTHING
+
+→ Kafka offset commits
+
+This directly closes the risk discovered in Phase 0.5.
+
+15. Independent consumer groups
+
+Polaris uses independent consumer groups for different projections:
+
+polaris_engine_group
+
+polaris_archive_group
+
+Each group receives every telemetry event.
+
+This is not load balancing between the two groups. It is fan-out:
+
+One event
+
+├── engine group processes it
+
+└── archive group processes it
+
+Within each group, Kafka distributes partitions among instances of that group.
+
+This design allows:
+
+Engine processing to scale separately.
+
+Archival to scale separately.
+
+PostgreSQL slowdown not to directly block spatial processing.
+
+Each consumer to maintain its own offset.
+
+Each consumer to apply its own retry and DLQ policy.
+
+16. Retry behavior
+
+Transient failures are retried at the same source offset up to five times.
+
+Examples:
+
+Redis temporarily unavailable
+
+PostgreSQL temporarily unavailable
+
+Dependency timeout
+
+Temporary network failure
+
+The consumer does not commit beyond the failed offset.
+
+Conceptually:
+
+Attempt 1 → fail
+
+Attempt 2 → fail
+
+Attempt 3 → succeed
+
+→ continue
+
+→ commit contiguous offset
+
+If all five attempts fail, the event becomes retry-exhausted and moves to the DLQ.
+
+This is a bounded-retry pattern. It prevents:
+
+Infinite retry loops
+
+Permanent partition blockage
+
+Silent event loss
+
+17. Dead-letter handling
+
+Permanent failures and retry-exhausted events are published to:
+
+telemetry.dead-letter.v1
+
+The DLQ record preserves:
+
+Original event bytes
+
+Source topic
+
+Source partition
+
+Source offset
+
+Kafka key
+
+Consumer group
+
+Failure reason
+
+Event identity where available
+
+Commit ordering for DLQ
+
+The source offset is not committed until DLQ publication succeeds.
+
+Correct ordering:
+
+Bad event detected
+
+→ Publish original bytes to DLQ
+
+→ Confirm DLQ publication
+
+→ Commit source offset
+
+If DLQ publication fails, the source event remains uncommitted and is retried.
+
+This avoids losing malformed events between the source topic and DLQ.
+
+Why duplicate DLQ entries may exist
+
+The engine and archive groups process independently.
+
+The same malformed record may therefore produce:
+
+Engine-group DLQ record
+
+Archive-group DLQ record
+
+That is expected because these represent separate consumer failures.
+
+Polaris does not claim exactly-once DLQ publication.
+
+18. Liveness and readiness
+
+Phase 1 separates:
+
+/healthz
+
+/readyz
+
+Liveness: /healthz
+
+Answers:
+
+Is the process alive and are its internal execution loops functioning?
+
+Example:
+
+{"status":"live"}
+
+A temporary Redis or PostgreSQL outage should not necessarily kill the process.
+
+Readiness: /readyz
+
+Answers:
+
+Can this service currently perform the responsibility for which traffic is being sent to it?
+
+For the gateway, readiness may require:
+
+Kafka available
+
+Publisher initialized
+
+Required background loops running
+
+For the engine, readiness may require:
+
+Kafka consumer initialized
+
+Redis projection available
+
+Spatial subsystem initialized
+
+Required archive dependency available for the corresponding consumer
+
+Example:
+
+{"status":"ready"}
+
+Why separation matters
+
+If liveness failed whenever PostgreSQL was temporarily unavailable, Kubernetes or Compose could repeatedly restart a healthy process, creating a restart loop.
+
+Instead:
+
+Process alive but dependency unavailable
+
+→ healthz succeeds
+
+→ readyz fails
+
+→ traffic is temporarily withheld
+
+→ process remains available to recover
+
+19. Graceful shutdown
+
+When the engine receives cancellation or termination:
+
+Stop accepting additional work.
+
+Flush pending batches independently per partition.
+
+Complete terminal processing.
+
+Commit safe contiguous offsets.
+
+Close consumers.
+
+Log shutdown completion.
+
+Terminate the process.
+
+The verification forced pending data in partitions 0 and 2 to flush independently.
+
+This proves shutdown handling is not hard-coded to one partition.
+
+20. Major changes from Phase 0.5
+
+AreaPhase 0.5Phase 1
+
+
+
+
+
+Kafka contract
+
+Canonical telemetry payload
+
+Versioned platform envelope
+
+Event identity
+
+No complete stable event identity
+
+Deterministic event ID
+
+Device ordering
+
+Kafka device key
+
+Device key plus boot and sequence
+
+Partitions
+
+Initial proof configuration
+
+Three-partition verified processing
+
+Validation
+
+Basic ingestion validation
+
+Structural, identity, domain and schema validation
+
+Redis
+
+Dashboard projection
+
+Atomic version-aware latest-state machine
+
+Spatial state
+
+Applied consumed telemetry
+
+Version-aware, replay-safe projection
+
+PostgreSQL
+
+Normal insert
+
+Unique identities and idempotent insert
+
+Duplicate handling
+
+Could duplicate effects
+
+Explicit duplicate classification
+
+Out-of-order handling
+
+Could regress state
+
+Sequence-aware rejection
+
+Device restart
+
+Ambiguous sequence reset
+
+Boot-aware state transition
+
+Dependency failure
+
+Limited evidence
+
+Bounded retry at failed offset
+
+Poison records
+
+Could block processing
+
+DLQ before source commit
+
+Service status
+
+/healthz
+
+Separate liveness and readiness
+
+Verification
+
+Happy-path pipeline
+
+Replay, failure and recovery evidence
+
+21. Design patterns now implemented
+
+21.1 Event-driven architecture
+
+Services communicate through Kafka events rather than direct synchronous calls.
+
+Gateway publishes
+
+→ independent consumers react
+
+Benefits:
+
+Loose coupling
+
+Independent scaling
+
+Replay
+
+Multiple projections
+
+Failure isolation
+
+21.2 Event envelope pattern
+
+The raw domain payload is wrapped with platform metadata:
+
+Metadata + payload
+
+This supports:
+
+Schema evolution
+
+Idempotency
+
+Correlation
+
+Tracing
+
+Producer identification
+
+Replay diagnostics
+
+21.3 Idempotent Consumer pattern
+
+Every consumer is designed so that processing the same event multiple times produces the same final state.
+
+PostgreSQL uses:
+
+Unique constraints + ON CONFLICT
+
+Redis uses:
+
+Boot/sequence comparison in atomic Lua
+
+Spatial state uses:
+
+Version-aware projection rules
+
+21.4 Materialized View pattern
+
+Kafka contains events, while specialized read models are built from them:
+
+Kafka telemetry
+
+├── Redis latest-state view
+
+├── In-memory spatial view
+
+└── PostgreSQL historical view
+
+Each view is optimized for a different query.
+
+21.5 CQRS-style separation
+
+Polaris now has a partial CQRS-style architecture:
+
+Event ingestion changes state.
+
+Match/dashboard queries use derived read models.
+
+Historical queries use PostgreSQL.
+
+Writes do not directly query and mutate the same representation used by every read.
+
+It is fair to call this “CQRS-style projections,” but Polaris is not yet a complete command-oriented CQRS system.
+
+21.6 Partitioned Log pattern
+
+Kafka acts as an ordered append-only log partitioned by device identity.
+
+This provides:
+
+Per-device ordering
+
+Replay
+
+Horizontal consumer scaling
+
+Independent consumer positions
+
+21.7 At-Least-Once Delivery pattern
+
+Offsets are committed only after processing.
+
+The trade-off is:
+
+No silent loss after processing failure
+
+in exchange for
+
+possible duplicate delivery
+
+Idempotency handles the duplicate side.
+
+21.8 Manual Checkpoint pattern
+
+Kafka offsets act as processing checkpoints.
+
+Polaris explicitly controls when it advances the checkpoint instead of auto-committing before processing is complete.
+
+21.9 Highest-Contiguous-Offset pattern
+
+A partition advances only past consecutive terminal outcomes.
+
+This prevents accidentally skipping a failed record between successful records.
+
+21.10 Atomic Compare-and-Set pattern
+
+The Redis Lua script performs version comparison and update atomically.
+
+Conceptually:
+
+Apply update only if incoming version is newer.
+
+This resembles compare-and-set or optimistic concurrency control.
+
+21.11 State Machine pattern
+
+Latest device state follows explicit transition rules:
+
+Current boot/current sequence
+
++ incoming boot/incoming sequence
+
+→ classification
+
+→ allowed or rejected transition
+
+This replaces scattered conditional logic with defined states and outcomes.
+
+21.12 Durable-before-Volatile Projection pattern
+
+Polaris updates the Redis decision state before the in-memory spatial view.
+
+Durable/latest-state projection
+
+→ volatile high-speed projection
+
+If the process restarts, the volatile view can be reconstructed from replay.
+
+21.13 Dead-Letter Queue pattern
+
+Events that cannot be processed safely are isolated rather than silently discarded or allowed to block the source partition forever.
+
+21.14 Bounded Retry pattern
+
+Transient failures receive a limited number of attempts.
+
+This prevents infinite retry loops and eventually isolates poison events.
+
+21.15 Competing Consumers and Consumer Groups
+
+Within one consumer group, partitions can be divided among replicas.
+
+Across different consumer groups, the same event is independently processed for different purposes.
+
+21.16 Bulk/Batch Processing pattern
+
+Events are processed in groups to reduce per-event overhead.
+
+The combination of:
+
+maximum batch size
+
++
+
+maximum batch delay
+
+balances throughput and latency.
+
+21.17 Bulkhead-style isolation
+
+Spatial and archive consumers use separate groups and progress independently.
+
+A slow PostgreSQL archive does not share the engine consumer offset.
+
+This is a form of workload isolation, although it is not yet a complete circuit-breaker/bulkhead framework.
+
+21.18 Health and Readiness pattern
+
+Process health and traffic eligibility are represented separately.
+
+This is essential for container orchestration and graceful dependency recovery.
+
+21.19 Graceful Shutdown pattern
+
+The consumer drains or flushes safe pending work before closing, preventing avoidable replay and partial-batch loss.
+
+21.20 Schema Versioning pattern
+
+Every canonical event declares its schema version.
+
+Consumers can:
+
+Accept supported versions
+
+Reject unsupported versions
+
+Route incompatible versions to the DLQ
+
+Evolve contracts deliberately
+
+21.21 Correlation and Causation tracking
+
+correlation_id groups events belonging to one larger operation.
+
+causation_id identifies the event that directly caused another event.
+
+Example:
+
+Telemetry event A
+
+→ offline event B
+
+B.correlation_id = A.correlation_id
+
+B.causation_id = A.event_id
+
+This becomes important when command and task orchestration are added.
+
+22. Patterns not yet implemented
+
+It is equally important to know what Phase 1 does not contain.
+
+Transactional outbox
+
+Not yet required for the current telemetry archive because the archive consumer writes PostgreSQL but does not atomically produce a corresponding business event.
+
+It will become important when:
+
+Task/command state changes in PostgreSQL
+
++
+
+an outgoing Kafka event must be published
+
+That belongs to the command-orchestration phase.
+
+Saga
+
+No multi-service business workflow currently requires compensating actions. Saga will become relevant for multi-step task orchestration.
+
+Two-phase commit
+
+Polaris does not use distributed transactions across Kafka, Redis and PostgreSQL.
+
+Instead, it uses:
+
+at-least-once delivery
+
++
+
+independently idempotent sinks
+
+Exactly-once processing
+
+Not claimed and not implemented.
+
+Circuit breaker
+
+The evidence shows bounded retry and readiness handling, but it does not demonstrate a complete circuit-breaker state machine.
+
+Complete digital twins
+
+Redis now contains the reported-state foundation, but complete twins still need:
+
+Desired state
+
+Device registry metadata
+
+Capabilities
+
+Tasks
+
+Commands
+
+Reconciliation
+
+Durable commands
+
+Command creation, delivery, retry and acknowledgement are still future work.
+
+23. How to explain Phase 1 in an interview
+
+A concise explanation would be:
+
+In Phase 1, I hardened the telemetry pipeline around at-least-once Kafka delivery. The gateway wraps Protobuf device telemetry in a versioned event envelope containing a deterministic event ID, boot identity, sequence number and tracing metadata. Events are partitioned by tenant and device, which preserves per-device ordering. Consumers use manual partition-aware commits and only advance the highest contiguous successfully handled offset. Redis uses an atomic Lua state machine to reject duplicates, out-of-order events and telemetry from retired boots before updating the live state. PostgreSQL uses unique event and device-sequence constraints with ON CONFLICT DO NOTHING, so commit failure and replay cannot create duplicate history. Transient failures retry at the same offset, while permanent failures are preserved in a DLQ before the source offset is committed.
+
+If asked why Redis is processed before memory:
+
+Redis holds the durable latest-state decision, while the in-memory spatial index is a volatile projection. Updating Redis first ensures memory never advances when the durable projection has failed. If the consumer crashes after Redis succeeds, Kafka replay is classified as a duplicate and safely reconstructs the in-memory index.
+
+If asked why this is not exactly once:
+
+Kafka may redeliver an event when processing succeeds but the offset commit fails. Polaris accepts that behavior and makes every sink idempotent, so the event can be processed repeatedly while producing the same final state.
+
+

@@ -165,6 +165,11 @@ func main() {
 	}
 	healthRedis := redis.NewClient(redisOptions)
 	defer healthRedis.Close()
+	registryStore, err := repository.NewRegistryStore(cfg.DB.URL)
+	if err != nil {
+		panic("Cannot start authenticated gateway without registry: " + err.Error())
+	}
+	defer registryStore.Close()
 
 	// 2. Instantiate Phase 1 Stateful Actor Registry
 	// Enforcing strict bounded mailbox capacity (5000) to protect against memory starvation
@@ -186,7 +191,7 @@ func main() {
 	router.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Tenant-ID")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(200)
@@ -196,8 +201,8 @@ func main() {
 	})
 
 	// 4. Wired Handlers (Passing Actor Engine to handle Ingress Isolation)
-	ingestionHandler := handler.NewIngestionHandler(actorRegistry)
-	dashboardHandler := handler.NewDashboardHandler(dashboardRegistry)
+	ingestionHandler := handler.NewIngestionHandler(actorRegistry, registryStore)
+	dashboardHandler := handler.NewDashboardHandler(dashboardRegistry, registryStore)
 
 	// Ingress endpoint (Binary Protobuf payloads go into Actor Mailboxes)
 	router.GET("/ws/telemetry", ingestionHandler.HandleIoTConnection)
@@ -231,6 +236,10 @@ func main() {
 		}
 		if err := healthRedis.Ping(probeCtx).Err(); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "dependency": "redis", "error": err.Error()})
+			return
+		}
+		if err := registryStore.DB.PingContext(probeCtx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "dependency": "registry", "error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})

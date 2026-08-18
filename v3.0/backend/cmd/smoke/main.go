@@ -15,11 +15,21 @@ import (
 func main() {
 	gateway := env("GATEWAY_URL", "ws://localhost:6080")
 	engine := env("ENGINE_URL", "http://localhost:6081")
-	id := fmt.Sprintf("SMOKE-%d", time.Now().UnixNano())
-	dashboard, _, err := websocket.DefaultDialer.Dial(gateway+"/ws/dashboard", nil)
+	id := env("SMOKE_DEVICE_ID", fmt.Sprintf("SMOKE-%d", time.Now().UnixNano()))
+	deviceToken := os.Getenv("DEVICE_TOKEN")
+	operatorToken := os.Getenv("OPERATOR_TOKEN")
+	if deviceToken == "" || operatorToken == "" {
+		panic("DEVICE_TOKEN and OPERATOR_TOKEN are required")
+	}
+	dashboardHeaders := http.Header{}
+	dashboardHeaders.Set("Authorization", "Bearer "+operatorToken)
+	dashboardHeaders.Set("X-Tenant-ID", "alpha_logistics")
+	dashboard, _, err := websocket.DefaultDialer.Dial(gateway+"/ws/dashboard", dashboardHeaders)
 	must(err)
 	defer dashboard.Close()
-	telemetry, _, err := websocket.DefaultDialer.Dial(gateway+"/ws/telemetry", nil)
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+deviceToken)
+	telemetry, _, err := websocket.DefaultDialer.Dial(gateway+"/ws/telemetry", headers)
 	must(err)
 	defer telemetry.Close()
 	now := time.Now().UTC()
@@ -45,7 +55,10 @@ func main() {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		url := fmt.Sprintf("%s/api/v1/nodes/match?tenant_id=alpha_logistics&lat=13.0067&lon=80.2206&radius_km=1&class=5", engine)
-		response, getErr := http.Get(url)
+		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		req.Header.Set("Authorization", "Bearer "+operatorToken)
+		req.Header.Set("X-Tenant-ID", "alpha_logistics")
+		response, getErr := http.DefaultClient.Do(req)
 		if getErr == nil {
 			var body struct {
 				Count int `json:"count"`

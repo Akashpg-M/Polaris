@@ -1,14 +1,16 @@
 # Polaris v3.0
 
-Polaris is a real-time spatial control plane for connected fleet assets. Devices send Protobuf telemetry to the gateway; Redpanda/Kafka carries the canonical event; the engine updates live spatial state, projects dashboard JSON through Redis, and a separate consumer archives every event in PostgreSQL/PostGIS.
+Polaris is a real-time spatial control plane for connected fleet assets. Phase 2 adds a durable, tenant-scoped device registry and makes authenticated registry identity the authority for every event. Devices send Protobuf telemetry to the gateway; Redpanda/Kafka carries the canonical event; the engine updates live spatial state, projects dashboard JSON through Redis, and a separate consumer archives every event in PostgreSQL/PostGIS.
 
 ## Architecture
 
 ```text
-Simulator / device
-    | binary SpatialObject v1 (device boot + sequence identity)
+Operator API key --> tenant / project / device registry --> hashed device credential
+                                                          |
+Simulator / device -- bearer credential or one-time ticket-+
+    | authenticated binary SpatialObject v1
     v
-Gateway validation + platform envelope :6080
+Gateway authentication + validation + server-derived identity :6080
     | key = tenant_id:device_id
     v
 Redpanda telemetry.ingress (3 partitions)
@@ -18,12 +20,29 @@ Redpanda telemetry.ingress (3 partitions)
                  atomic Redis latest-state + dashboard publish
                          |
                          +--> idempotent in-memory spatial state --> REST :6081
-                         +--> Gateway /ws/dashboard --> Browser
+                         +--> tenant-filtered Gateway /ws/dashboard --> Browser
+
+PostgreSQL registry mutation --> audit row + outbox row (one transaction)
+                                      |
+                                      +--> embedded relay --> device.lifecycle.v1
+
+PostgreSQL registry metadata + capabilities
+                         + Redis reported state / connectivity
+                                      |
+                                      +--> tenant-isolated digital-twin API
 ```
 
 The delivery contract is **at least once with idempotent consumers**, not exactly once. Telemetry is keyed by `tenant_id:device_id`, preserving per-device order across H3-cell movement. H3 remains downstream-only. Each Kafka partition is processed in offset order and commits only its highest contiguous successful offset after durable projection. Batches flush at 1,000 records or 150 ms. Permanent failures are published to `telemetry.dead-letter.v1` before their source offset is committed; transient failures retry without crossing the failed offset.
 
 The gateway wraps the device frame in a schema-versioned envelope containing event, boot, sequence, observation, ingestion, correlation, causation, producer, and trace metadata. PostgreSQL enforces unique event and device-sequence identities with `ON CONFLICT DO NOTHING`. Redis atomically classifies and applies `ACCEPTED`, `DUPLICATE`, `OUT_OF_ORDER`, `NEW_BOOT`, `RETIRED_BOOT`, and `BOOT_CONFLICT` transitions at `polaris:twin:{tenant_id}:{device_id}`. Redis is decided before volatile spatial state: if a consumer restarts after Redis succeeds but before Kafka commit, replay is a Redis duplicate that safely reconstructs the engine.
+
+## Phase 2 identity and registry
+
+Registry, twin, spatial, route, and dashboard-ticket APIs require a bearer operator key. The development-only platform key is supplied at startup through `DEV_PLATFORM_ADMIN_TOKEN`; it is hashed before storage and must never be committed. Platform administrators select tenant scope with `X-Tenant-ID`; tenant-scoped roles always derive it from the authenticated key.
+
+Device credentials contain 256 bits of cryptographic secret material and are stored only as hashes. A telemetry WebSocket is upgraded only after an active credential resolves to an active tenant and device. The authenticated principal must match the redundant payload identity, and the Kafka envelope always uses the principal identity. Browser simulators exchange operator authentication for a short-lived, hashed, one-use connection ticket. Credential, device, and tenant status are revalidated during an active telemetry session, so revocation takes effect on its next frame.
+
+Registry mutations atomically write their audit and outbox records. The embedded relay publishes lifecycle events with at-least-once semantics. Digital twins compose PostgreSQL metadata and capabilities with the Phase 1 Redis reported state. The Redis last-seen index supports `NEVER_CONNECTED`, `ONLINE`, `STALE`, and `OFFLINE` states without scanning keys.
 
 ## Run locally with Docker Compose
 
@@ -59,6 +78,14 @@ Run the Phase 1 unit, live Redis/PostgreSQL integration, and Compose checks with
 
 The tested failure semantics and current evidence are recorded in `PHASE_1_RELIABILITY_EVIDENCE.md`.
 
+Run the authenticated Phase 2 registry, credential, isolation, twin, connectivity, outbox, audit, and regression proof with:
+
+```powershell
+./backend/deployments/phase2-identity-test.ps1
+```
+
+The exact scenarios, live results, operational assumptions, and API inventory are recorded in `PHASE_2_IDENTITY_AND_TWIN_EVIDENCE.md`.
+
 ## Development checks
 
 ```powershell
@@ -66,4 +93,4 @@ cd backend
 go test ./...
 ```
 
-Environment variables used by services are `GATEWAY_PORT`, `ENGINE_PORT`, `KAFKA_BROKER_URL`, `REDIS_URL`, and `POSTGRES_URL`.
+Environment variables used by services include `GATEWAY_PORT`, `ENGINE_PORT`, `KAFKA_BROKER_URL`, `REDIS_URL`, `POSTGRES_URL`, `DEV_PLATFORM_ADMIN_TOKEN`, `DEVICE_STALE_AFTER`, `DEVICE_OFFLINE_AFTER`, `OFFLINE_SCAN_INTERVAL`, `CONNECTION_TICKET_TTL`, `OUTBOX_BATCH_SIZE`, and `OUTBOX_POLL_INTERVAL`.

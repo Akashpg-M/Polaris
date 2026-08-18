@@ -27,14 +27,17 @@ export default function SwarmTester() {
   // Run real-time backend benchmark assertions alongside the streaming payload
   const runBackendBenchmarks = async () => {
     try {
+	  const operatorToken = localStorage.getItem('polaris_operator_token');
+	  if (!operatorToken) return;
+	  const authHeaders = { Authorization: `Bearer ${operatorToken}`, 'X-Tenant-ID': 'alpha_logistics' };
       // 1. Benchmark QuadTree Spatial Index Latency
       const t0 = performance.now();
-      await fetch('http://localhost:6081/api/v1/nodes/match?tenant_id=alpha_logistics&lat=13.0067&lon=80.2206&radius_km=5.0');
+      await fetch('http://localhost:6081/api/v1/nodes/match?lat=13.0067&lon=80.2206&radius_km=5.0', { headers: authHeaders });
       const spatialDiff = performance.now() - t0;
 
       // 2. Benchmark Dijkstra Pathfinding Latency
       const t1 = performance.now();
-      const routeRes = await fetch('http://localhost:6081/api/v1/routes/calculate?src_lat=13.0067&src_lon=80.2206&tgt_lat=13.0012&tgt_lon=80.2565');
+      const routeRes = await fetch('http://localhost:6081/api/v1/routes/calculate?src_lat=13.0067&src_lon=80.2206&tgt_lat=13.0012&tgt_lon=80.2565', { headers: authHeaders });
       const routeJson = await routeRes.json();
       const routeDiff = performance.now() - t1;
 
@@ -48,14 +51,20 @@ export default function SwarmTester() {
     }
   };
 
-  const bootDrone = (nodeId: string) => {
-    const ws = new WebSocket("ws://localhost:6080/ws/telemetry");
+  const bootDrone = async (nodeId: string) => {
+	const operatorToken=localStorage.getItem('polaris_operator_token');if(!operatorToken){addLog('Missing polaris_operator_token','danger');return;}
+	const headers={Authorization:`Bearer ${operatorToken}`,'X-Tenant-ID':'alpha_logistics','Content-Type':'application/json'};
+	const created=await fetch('http://localhost:6081/api/v1/devices',{method:'POST',headers,body:JSON.stringify({device_id:nodeId,device_type_id:'delivery_drone',display_name:nodeId})});if(!created.ok&&created.status!==409)return;
+	await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/activate`,{method:'POST',headers});await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/credentials`,{method:'POST',headers,body:'{}'});
+	const ticketResult=await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/connection-ticket`,{method:'POST',headers,body:'{}'});if(!ticketResult.ok)return;const ticket=(await ticketResult.json()).data.ticket;
+    const ws = new WebSocket(`ws://localhost:6080/ws/telemetry?ticket=${encodeURIComponent(ticket)}`);
     ws.binaryType = "arraybuffer";
     
     let lat = 13.0067 + (Math.random() * 0.02 - 0.01);
     let lon = 80.2206 + (Math.random() * 0.02 - 0.01);
     let velocityMps = 12.0 + Math.random() * 8;
     let headingDeg = Math.floor(Math.random() * 360);
+	const bootStartedAt=Date.now();const deviceBootId=`analytics-${nodeId}-${bootStartedAt}`;let sequenceNumber=0;
 
     ws.onopen = () => {
       addLog(`Uplink Channel [${nodeId}] Active`, 'success');
@@ -64,12 +73,13 @@ export default function SwarmTester() {
       
       const timer = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
+		  sequenceNumber+=1;
           const radians = (headingDeg * Math.PI) / 180;
           lat += (velocityMps * Math.cos(radians)) / 111000;
           lon += (velocityMps * Math.sin(radians)) / (111000 * Math.cos(lat * Math.PI / 180));
 
           // Compile raw hardware bytes matching proto wire specs
-          const binaryBuffer = serializeProtobufTelemetry({
+		  const observedAt=Date.now();const binaryBuffer = serializeProtobufTelemetry({
             id: nodeId,
             tenantId: "alpha_logistics",
             type: 5,   
@@ -79,7 +89,7 @@ export default function SwarmTester() {
             velocityMps,
             headingDeg,
             energyPercent: Math.floor(85 + Math.random() * 15),
-            timestamp: Date.now()
+			timestamp: observedAt, deviceBootId, sequenceNumber, bootStartedAt, observedAt, schemaVersion:1
           });
 
           ws.send(new Uint8Array(binaryBuffer));
