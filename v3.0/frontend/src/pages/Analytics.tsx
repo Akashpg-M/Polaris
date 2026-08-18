@@ -1,79 +1,171 @@
-import { useEffect, useState } from 'react';
-import { Line } from 'react-chartjs-2';
-import type { ChartData, ChartOptions } from 'chart.js';
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Filler } from 'chart.js';
+import { useState, useRef, useEffect } from 'react';
+import { serializeProtobufTelemetry } from '../types/polaris';
+import type { LogEntry } from '../types/polaris';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Filler);
+interface DiagnosticMetrics {
+  activeConnections: number;
+  spatialMatcherLatencyMs: number;
+  routerExecutionLatencyMs: number;
+}
 
-export default function Analytics() {
-  const [uplinks, setUplinks] = useState<number>(0);
-  
-  // Strongly type the ChartJS data structure
-  const [chartData, setChartData] = useState<ChartData<'line'>>({
-    labels: [],
-    datasets: [{
-      label: 'Concurrent IoT Uplinks',
-      data: [],
-      borderColor: '#10b981',
-      backgroundColor: 'rgba(16, 185, 129, 0.1)',
-      fill: true,
-      tension: 0.4,
-      pointRadius: 0
-    }]
+export default function SwarmTester() {
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [metrics, setMetrics] = useState<DiagnosticMetrics>({
+    activeConnections: 0,
+    spatialMatcherLatencyMs: 0,
+    routerExecutionLatencyMs: 0
   });
 
-  const chartOptions: ChartOptions<'line'> = {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: false,
-    scales: {
-      x: { display: false },
-      y: { beginAtZero: true, grid: { color: '#334155' } }
+  const activeTimers = useRef<ReturnType<typeof setInterval>[]>([]);
+  const openSockets = useRef<WebSocket[]>([]);
+
+  const addLog = (msg: string, type: LogEntry['type'] = 'info') => {
+    const time = new Date().toISOString().split('T')[1].slice(0, 12);
+    setLogs((prev) => [{ time, msg, type }, ...prev].slice(0, 50)); 
+  };
+
+  // Run real-time backend benchmark assertions alongside the streaming payload
+  const runBackendBenchmarks = async () => {
+    try {
+      // 1. Benchmark QuadTree Spatial Index Latency
+      const t0 = performance.now();
+      await fetch('http://localhost:6081/api/v1/nodes/match?tenant_id=alpha_logistics&lat=13.0067&lon=80.2206&radius_km=5.0');
+      const spatialDiff = performance.now() - t0;
+
+      // 2. Benchmark Dijkstra Pathfinding Latency
+      const t1 = performance.now();
+      const routeRes = await fetch('http://localhost:6081/api/v1/routes/calculate?src_lat=13.0067&src_lon=80.2206&tgt_lat=13.0012&tgt_lon=80.2565');
+      const routeJson = await routeRes.json();
+      const routeDiff = performance.now() - t1;
+
+      setMetrics(prev => ({
+        ...prev,
+        spatialMatcherLatencyMs: parseFloat(spatialDiff.toFixed(1)),
+        routerExecutionLatencyMs: routeJson.error ? 0 : parseFloat(routeDiff.toFixed(1))
+      }));
+    } catch (err) {
+      // Silent error boundaries during warm boot sequences
     }
   };
 
-  useEffect(() => {
-    const fetchMetrics = async () => {
-      try {
-        const res = await fetch('http://localhost:6080/api/v1/metrics/connections');
-        const json: { active_uplinks: number } = await res.json();
-        
-        const currentUplinks = json.active_uplinks || 0;
-        setUplinks(currentUplinks);
-        
-        const now = new Date().toLocaleTimeString();
-        setChartData((prev) => {
-          const newLabels = [...(prev.labels as string[]), now].slice(-60);
-          const newData = [...prev.datasets[0].data, currentUplinks].slice(-60);
-          
-          return {
-            labels: newLabels,
-            datasets: [{
-              ...prev.datasets[0],
-              data: newData
-            }]
-          };
-        });
-      } catch (err) {
-        // Silent catch for polling to prevent console spam
-      }
+  const bootDrone = (nodeId: string) => {
+    const ws = new WebSocket("ws://localhost:6080/ws/telemetry");
+    ws.binaryType = "arraybuffer";
+    
+    let lat = 13.0067 + (Math.random() * 0.02 - 0.01);
+    let lon = 80.2206 + (Math.random() * 0.02 - 0.01);
+    let velocityMps = 12.0 + Math.random() * 8;
+    let headingDeg = Math.floor(Math.random() * 360);
+
+    ws.onopen = () => {
+      addLog(`Uplink Channel [${nodeId}] Active`, 'success');
+      openSockets.current.push(ws);
+      setMetrics(prev => ({ ...prev, activeConnections: openSockets.current.length }));
+      
+      const timer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          const radians = (headingDeg * Math.PI) / 180;
+          lat += (velocityMps * Math.cos(radians)) / 111000;
+          lon += (velocityMps * Math.sin(radians)) / (111000 * Math.cos(lat * Math.PI / 180));
+
+          // Compile raw hardware bytes matching proto wire specs
+          const binaryBuffer = serializeProtobufTelemetry({
+            id: nodeId,
+            tenantId: "alpha_logistics",
+            type: 5,   
+            status: 3, 
+            lat,
+            lon,
+            velocityMps,
+            headingDeg,
+            energyPercent: Math.floor(85 + Math.random() * 15),
+            timestamp: Date.now()
+          });
+
+          ws.send(new Uint8Array(binaryBuffer));
+        }
+      }, 1000);
+      
+      activeTimers.current.push(timer);
     };
 
-    const interval = setInterval(fetchMetrics, 1000);
-    return () => clearInterval(interval);
+    ws.onclose = () => {
+      // Safely filter connection out of operational slice arrays
+      openSockets.current = openSockets.current.filter(s => s !== ws);
+      setMetrics(prev => ({ ...prev, activeConnections: openSockets.current.length }));
+    };
+  };
+
+  const launchSwarm = (count: number) => {
+    addLog(`Deploying ${count} performance testing threads onto cluster...`, 'info');
+    for (let i = 1; i <= count; i++) {
+      setTimeout(() => bootDrone(`DRONE-${Math.floor(1000 + Math.random() * 9000)}`), i * 15);
+    }
+  };
+
+  const purgeSwarm = () => {
+    addLog("Purging all active simulated hardware signals...", 'danger');
+    activeTimers.current.forEach(clearInterval);
+    openSockets.current.forEach(ws => ws.close());
+    activeTimers.current = [];
+    openSockets.current = [];
+    setMetrics({ activeConnections: 0, spatialMatcherLatencyMs: 0, routerExecutionLatencyMs: 0 });
+  };
+
+  useEffect(() => {
+    const metricTicker = setInterval(runBackendBenchmarks, 2000);
+    return () => {
+      clearInterval(metricTicker);
+      purgeSwarm();
+    };
   }, []);
 
   return (
-    <div className="p-8 h-full flex flex-col">
-      <div className="mb-8 text-center bg-slate-800 p-6 rounded-xl border border-slate-700 max-w-sm mx-auto">
-        <div className={`text-6xl font-bold ${uplinks > 20000 ? 'text-red-500' : 'text-emerald-500'}`}>
-          {uplinks.toLocaleString()}
-        </div>
-        <div className="text-slate-400 mt-2 uppercase tracking-widest text-sm">Active WebSockets</div>
+    <div className="p-8 h-full flex flex-col gap-6 overflow-y-auto bg-slate-900 text-slate-100">
+      <div>
+        <h2 className="text-2xl font-bold tracking-tight">🚁 System Stress & Performance Ingestion Console</h2>
+        <p className="text-xs text-slate-400 mt-1">Directly compiles and injects pure binary payloads into the cluster mesh</p>
       </div>
 
-      <div className="flex-1 min-h-[400px] bg-slate-800 p-6 rounded-xl border border-slate-700">
-        <Line data={chartData} options={chartOptions} />
+      {/* Real-time Diagnostics HUD */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-slate-800 p-5 rounded-xl border border-slate-700/60 shadow-md">
+          <div className="text-slate-400 text-xs uppercase tracking-widest font-semibold">Locally Verified Connections</div>
+          <div className="text-4xl font-extrabold text-blue-500 mt-2">{metrics.activeConnections}</div>
+        </div>
+        <div className="bg-slate-800 p-5 rounded-xl border border-slate-700/60 shadow-md">
+          <div className="text-slate-400 text-xs uppercase tracking-widest font-semibold">QuadTree Matcher Latency</div>
+          <div className="text-4xl font-extrabold text-cyan-400 mt-2">{metrics.spatialMatcherLatencyMs} <span className="text-sm font-medium text-slate-500">ms</span></div>
+        </div>
+        <div className="bg-slate-800 p-5 rounded-xl border border-slate-700/60 shadow-md">
+          <div className="text-slate-400 text-xs uppercase tracking-widest font-semibold">Dijkstra Router Compute</div>
+          <div className="text-4xl font-extrabold text-teal-400 mt-2">
+            {metrics.routerExecutionLatencyMs > 0 ? `${metrics.routerExecutionLatencyMs} ms` : <span className="text-sm text-red-400 font-semibold">Network Offline</span>}
+          </div>
+        </div>
+      </div>
+
+      {/* Control Actions */}
+      <div className="flex gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
+        <button onClick={() => launchSwarm(5)} className="bg-blue-600 hover:bg-blue-500 px-5 py-2.5 rounded-lg font-bold transition text-sm">Deploy 5</button>
+        <button onClick={() => launchSwarm(50)} className="bg-purple-600 hover:bg-purple-500 px-5 py-2.5 rounded-lg font-bold transition text-sm">Deploy 50</button>
+        <button onClick={() => launchSwarm(200)} className="bg-red-600 hover:bg-red-500 px-5 py-2.5 rounded-lg font-bold transition text-sm">Stress Load (200)</button>
+        <button onClick={purgeSwarm} className="border border-slate-700 hover:bg-slate-800 px-5 py-2.5 rounded-lg font-bold transition text-sm ml-auto">Teardown Cluster Stream</button>
+      </div>
+
+      {/* Hardware Logging Feed */}
+      <div className="flex-1 min-h-[250px] bg-slate-950 border border-slate-800 rounded-xl p-4 overflow-y-auto font-mono text-xs shadow-inner">
+        {logs.length === 0 && <div className="text-slate-600 italic">No low-level telemetry streams established. Select deployment parameter above.</div>}
+        {logs.map((l, i) => (
+          <div key={i} className="py-0.5 border-b border-slate-900/40 last:border-0">
+            <span className="text-slate-500 mr-2">[{l.time}]</span>
+            <span className={
+              l.type === 'warning' ? 'text-amber-400' : 
+              l.type === 'success' ? 'text-emerald-400' : 
+              l.type === 'danger' ? 'text-red-400' : 'text-blue-400'
+            }>{l.msg}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 	"github.com/gorilla/websocket"
-  pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
-  "google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 // Atomic counters for thread-safe, high-speed metrics tracking
@@ -79,8 +79,8 @@ SpawnLoop:
 
 	log.Println("\n✅ All requested drones deployed. Press Ctrl+C to terminate test.")
 	<-quit // Wait here until user kills the script
-	
-	cancel() // Tell all drones to shut down
+
+	cancel()  // Tell all drones to shut down
 	wg.Wait() // Wait for them to actually close
 	fmt.Println("\nStress test concluded cleanly.")
 }
@@ -112,24 +112,32 @@ func simulateDrone(ctx context.Context, id int, wsURL string, wg *sync.WaitGroup
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
+	bootStartedAt := time.Now().UTC().UnixMilli()
+	var sequence uint64
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			sequence++
 			lat += (rand.Float64() - 0.5) * 0.001
 			lon += (rand.Float64() - 0.5) * 0.001
 
 			// 1. Construct the Protobuf payload
 			payload := &pb.SpatialObject{
-				TenantId:      "alpha_logistics",
-				Id:            nodeID,
-				Type:          pb.NodeType_NODE_TYPE_DRONE,
-				Lat:           lat,
-				Lon:           lon,
-				Status:        pb.NodeStatus_NODE_STATUS_ACTIVE,
-				EnergyPercent: int32(rand.Intn(100)),
+				TenantId:       "alpha_logistics",
+				Id:             nodeID,
+				Type:           pb.NodeType_NODE_TYPE_DRONE,
+				Lat:            lat,
+				Lon:            lon,
+				Status:         pb.NodeStatus_NODE_STATUS_ACTIVE,
+				EnergyPercent:  int32(rand.Intn(100)),
+				DeviceBootId:   "load-boot-" + nodeID,
+				SequenceNumber: sequence,
+				BootStartedAt:  bootStartedAt,
+				ObservedAt:     time.Now().UTC().UnixMilli(),
+				SchemaVersion:  1,
 			}
 
 			// 2. Marshal to raw bytes using proto

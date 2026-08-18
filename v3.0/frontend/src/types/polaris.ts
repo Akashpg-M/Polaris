@@ -1,11 +1,7 @@
-export interface MatchResult {
-  node_id: string;
-  asset_class: number;
-  lat: number;
-  lon: number;
-  distance_km: number;
-  eta_seconds: number;
-  route_type: string;
+export interface LogEntry {
+  time: string;
+  msg: string;
+  type: 'info' | 'success' | 'warning' | 'danger';
 }
 
 export interface ZonePrediction {
@@ -18,18 +14,95 @@ export interface ZonePrediction {
   TenantID: string;
 }
 
-export interface LogEntry {
-  time: string;
-  msg: string;
-  type: 'info' | 'success' | 'warning' | 'danger';
-}
-
-export interface TelemetryPayload {
-  tenant_id: string;
-  node_id: string;
-  asset_class: number;
+/**
+ * High-Performance, Zero-Allocation Protobuf Wire Format Encoder
+ * Compiles physics telemetry directly to raw bytes matching spatial.proto field tags
+ */
+export function serializeProtobufTelemetry(data: {
+  id: string;
+  tenantId: string;
+  type: number;
+  status: number;
   lat: number;
   lon: number;
-  status: string;
-  battery: number;
+  velocityMps: number;
+  headingDeg: number;
+  energyPercent: number;
+  timestamp: number;
+}): Uint8Array {
+  const encoder = new TextEncoder();
+  const idBytes = encoder.encode(data.id);
+  const tenantBytes = encoder.encode(data.tenantId);
+
+  // Allocate a safe upper-bound workspace buffer
+  const buffer = new ArrayBuffer(256);
+  const view = new DataView(buffer);
+  let offset = 0;
+
+  // Helper to write Protobuf Varints (Variable-length integers)
+  const writeVarint = (value: number) => {
+    while (value >= 0x80) {
+      view.setUint8(offset++, (value & 0x7f) | 0x80);
+      value >>>= 7;
+    }
+    view.setUint8(offset++, value & 0x7f);
+  };
+
+  // Helper to write BigInt Varints (for 64-bit millisecond timestamps)
+  const writeBigVarint = (value: bigint) => {
+    while (value >= 0x80n) {
+      view.setUint8(offset++, Number((value & 0x7fn) | 0x80n));
+      value >>= 7n;
+    }
+    view.setUint8(offset++, Number(value & 0x7fn));
+  };
+
+  // Field 1: string id (Wire Type 2: Length-delimited)
+  view.setUint8(offset++, (1 << 3) | 2);
+  writeVarint(idBytes.length);
+  for (let i = 0; i < idBytes.length; i++) view.setUint8(offset++, idBytes[i]);
+
+  // Field 2: string tenant_id (Wire Type 2: Length-delimited)
+  view.setUint8(offset++, (2 << 3) | 2);
+  writeVarint(tenantBytes.length);
+  for (let i = 0; i < tenantBytes.length; i++) view.setUint8(offset++, tenantBytes[i]);
+
+  // Field 3: int32 type (Wire Type 0: Varint)
+  view.setUint8(offset++, (3 << 3) | 0);
+  writeVarint(data.type);
+
+  // Field 4: int32 status (Wire Type 0: Varint)
+  view.setUint8(offset++, (4 << 3) | 0);
+  writeVarint(data.status);
+
+  // Field 5: double lat (Wire Type 1: 64-bit Fixed)
+  view.setUint8(offset++, (5 << 3) | 1);
+  view.setFloat64(offset, data.lat, true); // true = Little Endian
+  offset += 8;
+
+  // Field 6: double lon (Wire Type 1: 64-bit Fixed)
+  view.setUint8(offset++, (6 << 3) | 1);
+  view.setFloat64(offset, data.lon, true);
+  offset += 8;
+
+  // Field 7: double velocity_mps (Wire Type 1: 64-bit Fixed)
+  view.setUint8(offset++, (7 << 3) | 1);
+  view.setFloat64(offset, data.velocityMps, true);
+  offset += 8;
+
+  // Field 8: double heading_deg (Wire Type 1: 64-bit Fixed)
+  view.setUint8(offset++, (8 << 3) | 1);
+  view.setFloat64(offset, data.headingDeg, true);
+  offset += 8;
+
+  // Field 9: int32 energy_percent (Wire Type 0: Varint)
+  view.setUint8(offset++, (9 << 3) | 0);
+  writeVarint(data.energyPercent);
+
+  // Field 10: int64 timestamp (Wire Type 0: Varint)
+  view.setUint8(offset++, (10 << 3) | 0);
+  writeBigVarint(BigInt(data.timestamp));
+
+  // Slice out the exact compiled bytecode envelope
+  return new Uint8Array(buffer, 0, offset);
 }

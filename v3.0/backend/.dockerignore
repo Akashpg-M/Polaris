@@ -1,0 +1,6 @@
+.git
+.tmp
+.gocache
+.gotmp
+**/*_test.go
+deployments

@@ -1,103 +1,113 @@
-# services:
-#   # 1. THE MESSAGE BROKER & SHOCK ABSORBER
-#   redis:
-#     image: redis:7-alpine
-#     container_name: polaris_redis_v3
-#     ports:
-#       - "6379:6379"
-#     command: ["redis-server", "--appendonly", "yes"] # Ensures stream data isn't lost on restart
-
-#   # 2. THE PERMANENT LEDGER
-#   postgres:
-#     image: postgis/postgis:16-3.4                             # PostGIS for future advanced spatial queries
-#     container_name: polaris_db_v3
-#     environment:
-#       POSTGRES_USER: polaris_user
-#       POSTGRES_PASSWORD: polaris_password
-#       POSTGRES_DB: polaris_core
-#     ports:
-#       - "5432:5432"
-#     volumes:
-#       - polaris_pg_data:/var/lib/postgresql/data
-#       - ./init.sql:/docker-entrypoint-initdb.d/init.sql # Auto-runs schema on first boot
-
-#   # 3. THE LOCAL ROUTING ENGINE
-#   osrm:
-#     image: osrm/osrm-backend
-#     container_name: polaris_osrm_v3
-#     ports:
-#       - "5000:5000"
-#     command: osrm-routed --algorithm mld /data/chennai-metro.osrm
-#     volumes:
-#       - ../../../chennai_map:/data
-  
-#   # Redpanda: Ultra-fast Kafka Compatible Event Streaming Platform
-#   redpanda:
-#     image: docker.redpanda.com/redpandadata/redpanda:latest
-#     container_name: polaris_kafka_v3
-#     command:
-#       - redpanda start
-#       - --smp 1
-#       - --reserve-memory 0M
-#       - --overprovisioned
-#       - --node-id 0
-#       - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
-#       - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
-#     ports:
-#       - "9092:9092"
-#       - "9644:9644"
-
-# volumes:
-#   polaris_pg_data:
-
-version: '3.8'
-
 services:
-  # 1. THE EVENT FABRIC (INGRESS)
-  # Redpanda: Ultra-fast Kafka Compatible Event Streaming Platform
-  # Handles the 3,000+ pings/sec telemetry ingestion via H3 Geohash partitioning.
   redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:latest
-    container_name: polaris_kafka_v3
-    command:
-      - redpanda start
-      - --smp 1
-      - --reserve-memory 0M
-      - --overprovisioned
-      - --node-id 0
-      - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
-      - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
-    ports:
-      - "9092:9092"
-      - "9644:9644"
-
-  # 2. THE COMMAND ROUTER (EGRESS)
-  # Redis is now ONLY used for lightweight, sub-millisecond Pub/Sub to push 
-  # relocation commands from the Engine back to the Edge WebSockets.
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.18
+    command: ["redpanda", "start", "--smp=1", "--memory=1G", "--reserve-memory=0M", "--overprovisioned", "--node-id=0", "--kafka-addr=PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092", "--advertise-kafka-addr=PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092"]
+    ports: ["9092:9092", "9644:9644"]
+    volumes:
+      - polaris_redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health", "-X", "brokers=localhost:29092", "--exit-when-healthy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
   redis:
-    image: redis:7-alpine
-    container_name: polaris_redis_v3
-    ports:
-      - "6379:6379"
-    # Note: Removed appendonly=yes because Pub/Sub is transient. 
-    # We no longer need Redis to save state to disk!
-    command: ["redis-server"] 
-
-  # 3. THE PERMANENT LEDGER (COLD STORAGE)
-  # Consumes data asynchronously from Kafka via the Archiver worker.
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", ""]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  kafka-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.18
+    depends_on:
+      redpanda: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if ! rpk topic describe polaris.phase1.initialized -X brokers=redpanda:29092 >/dev/null 2>&1; then
+          rpk topic create telemetry.ingress --partitions 3 --replicas 1 -X brokers=redpanda:29092 || rpk topic add-partitions telemetry.ingress --num 2 -X brokers=redpanda:29092
+          rpk topic create telemetry.dead-letter.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
+          rpk topic create polaris.phase1.initialized --partitions 1 --replicas 1 -X brokers=redpanda:29092
+        fi
   postgres:
     image: postgis/postgis:16-3.4
-    container_name: polaris_db_v3
     environment:
       POSTGRES_USER: polaris_user
       POSTGRES_PASSWORD: polaris_password
       POSTGRES_DB: polaris_core
-    ports:
-      - "5432:5432"
+    ports: ["5432:5432"]
     volumes:
       - polaris_pg_data:/var/lib/postgresql/data
-      # Ensure your init.sql is updated to support the new pb.SpatialObject schema!
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql 
-
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polaris_user -d polaris_core"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  postgres-migrate:
+    image: postgis/postgis:16-3.4
+    environment:
+      PGPASSWORD: polaris_password
+    volumes:
+      - ./init.sql:/migrations/init.sql:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    command: ["psql", "-h", "postgres", "-U", "polaris_user", "-d", "polaris_core", "-v", "ON_ERROR_STOP=1", "-f", "/migrations/init.sql"]
+  gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args: { SERVICE: gateway }
+    environment:
+      GATEWAY_PORT: "6080"
+      KAFKA_BROKER_URL: redpanda:29092
+      REDIS_URL: redis://redis:6379/0
+    ports: ["6080:6080"]
+    depends_on:
+      kafka-init: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:6080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  engine:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args: { SERVICE: engine }
+    environment:
+      ENGINE_PORT: "6081"
+      KAFKA_BROKER_URL: redpanda:29092
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_URL: postgres://polaris_user:polaris_password@postgres:5432/polaris_core?sslmode=disable
+    ports: ["6081:6081"]
+    depends_on:
+      kafka-init: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      postgres-migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:6081/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    ports: ["5173:80"]
+    depends_on:
+      gateway: { condition: service_healthy }
+      engine: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 volumes:
   polaris_pg_data:
+  polaris_redpanda_data:

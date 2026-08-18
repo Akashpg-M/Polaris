@@ -2,29 +2,34 @@ package stream
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
+	"time"
 
-	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
 	"github.com/Akashpg-M/polaris/backend/algo_/graph"
+	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
+	"github.com/Akashpg-M/polaris/backend/internal/core/events"
 	"github.com/segmentio/kafka-go"
-	"google.golang.org/protobuf/proto"
 )
 
 type TrafficAnalyzer struct {
 	reader  *kafka.Reader
+	dlq     *kafka.Writer
 	network *graph.RoadNetwork
 }
 
 func NewTrafficAnalyzer(brokerURL string, network *graph.RoadNetwork) *TrafficAnalyzer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{brokerURL},
-		Topic:   KafkaTelemetryTopic, // Using the constant we defined in archiver.go
-		GroupID: "polaris_traffic_group", // A distinct group so it gets its own copy of the data
+		Brokers:        []string{brokerURL},
+		Topic:          KafkaTelemetryTopic,     // Using the constant we defined in archiver.go
+		GroupID:        "polaris_traffic_group", // A distinct group so it gets its own copy of the data
+		CommitInterval: 0,
 	})
 
 	return &TrafficAnalyzer{
 		reader:  reader,
+		dlq:     &kafka.Writer{Addr: kafka.TCP(brokerURL), Topic: DeadLetterTopic, Balancer: &kafka.Hash{}},
 		network: network,
 	}
 }
@@ -32,28 +37,45 @@ func NewTrafficAnalyzer(brokerURL string, network *graph.RoadNetwork) *TrafficAn
 func (t *TrafficAnalyzer) Start(ctx context.Context) {
 	slog.Info("Dynamic Traffic Analyzer Online. Monitoring Kafka stream for congestion events...")
 
+	defer t.reader.Close()
+	defer t.dlq.Close()
 	for {
-		select {
-		case <-ctx.Done():
-			t.reader.Close()
-			return
-		default:
-			msg, err := t.reader.ReadMessage(ctx)
-			if err != nil {
-				continue
+		msg, err := t.reader.FetchMessage(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
 			}
-
-			var payload pb.SpatialObject
-			if err := proto.Unmarshal(msg.Value, &payload); err != nil {
-				continue
+			continue
+		}
+		envelope, parseErr := events.Unmarshal(msg.Value)
+		if parseErr != nil {
+			for {
+				err = t.dlq.WriteMessages(ctx, kafka.Message{Key: msg.Key, Value: msg.Value, Headers: []kafka.Header{
+					{Key: "error_reason", Value: []byte(parseErr.Error())}, {Key: "consumer", Value: []byte("polaris_traffic_group")},
+					{Key: "source_partition", Value: []byte(fmt.Sprint(msg.Partition))}, {Key: "source_offset", Value: []byte(fmt.Sprint(msg.Offset))},
+				}})
+				if err == nil {
+					break
+				}
+				select {
+				case <-time.After(250 * time.Millisecond):
+				case <-ctx.Done():
+					return
+				}
 			}
-
-			// We only care about moving assets for traffic analysis
-			if payload.Type == pb.NodeType_NODE_TYPE_STATIC_SENSOR {
-				continue
+		} else if envelope.Payload.Type != pb.NodeType_NODE_TYPE_STATIC_SENSOR {
+			t.processCongestion(envelope.Payload)
+		}
+		for {
+			if err = t.reader.CommitMessages(ctx, msg); err == nil {
+				break
 			}
-
-			t.processCongestion(&payload)
+			slog.Error("traffic Kafka commit failed; retrying same offset", "partition", msg.Partition, "offset", msg.Offset, "error", err)
+			select {
+			case <-time.After(250 * time.Millisecond):
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }
@@ -70,7 +92,7 @@ func (t *TrafficAnalyzer) processCongestion(payload *pb.SpatialObject) {
 	// If a vehicle is doing 3 m/s, the multiplier becomes 5.0 (5x cost to travel).
 	baselineSpeed := 15.0
 	currentSpeed := math.Max(1.0, float64(payload.VelocityMps)) // Prevent division by zero
-	
+
 	multiplier := math.Max(1.0, baselineSpeed/currentSpeed)
 
 	// Cap extreme multipliers so we don't sever the graph entirely
@@ -81,9 +103,9 @@ func (t *TrafficAnalyzer) processCongestion(payload *pb.SpatialObject) {
 	// 3. Apply the dynamic weight to the road network
 	// Note: If multiplier > 1.5, we log it as a traffic event
 	if multiplier > 1.5 {
-		slog.Debug("Traffic congestion detected", 
-			"node", nearestNode, 
-			"velocity_mps", payload.VelocityMps, 
+		slog.Debug("Traffic congestion detected",
+			"node", nearestNode,
+			"velocity_mps", payload.VelocityMps,
 			"new_weight", multiplier)
 	}
 

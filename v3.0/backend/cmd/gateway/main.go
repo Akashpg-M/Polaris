@@ -44,7 +44,7 @@
 //     c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 //     c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 //     c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-    
+
 //     // Handle preflight OPTIONS requests instantly
 //     if c.Request.Method == "OPTIONS" {
 //         c.AbortWithStatus(200)
@@ -153,21 +153,29 @@ import (
 func main() {
 	cfg := config.Load()
 	logger.Init()
-	slog.Info("Booting Polaris v4.0 API Gateway...")
+	slog.Info("Booting Polaris v3.0 API Gateway...")
 
 	// 1. Initialized Adapters & Publishers
-	mockPublisher := repository.NewMockEventPublisher() // Asynchronous Projection Driver
+	kafkaBroker := getEnvFallback("KAFKA_BROKER_URL", "localhost:9092")
+	kafkaPublisher := repository.NewKafkaEventPublisher(kafkaBroker)
+	defer kafkaPublisher.Close()
+	redisOptions, err := redis.ParseURL(cfg.Redis.URL)
+	if err != nil {
+		panic("invalid Redis URL: " + err.Error())
+	}
+	healthRedis := redis.NewClient(redisOptions)
+	defer healthRedis.Close()
 
 	// 2. Instantiate Phase 1 Stateful Actor Registry
 	// Enforcing strict bounded mailbox capacity (5000) to protect against memory starvation
-	actorRegistry := actor.NewActorRegistry(mockPublisher, 5000)
+	actorRegistry := actor.NewActorRegistry(kafkaPublisher, 5000)
 
 	// Keep Legacy Dashboard Tracking for UI Downstream Egress Broadcasts
 	dashboardRegistry := handler.NewDashboardRegistry()
 
 	// 3. Start Background Async Topic Consumers
 	// Note: Command loop can now target actors directly or pass through our registries
-	go startCommandSubscriber(cfg.Redis.URL, actorRegistry) 
+	go startCommandSubscriber(cfg.Redis.URL, actorRegistry)
 	go startDashboardSubscriber(cfg.Redis.URL, dashboardRegistry)
 
 	gin.SetMode(gin.ReleaseMode)
@@ -179,7 +187,7 @@ func main() {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		
+
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(200)
 			return
@@ -213,6 +221,20 @@ func main() {
 			c.JSON(200, gin.H{"active_uplinks": ingestionHandler.GetActiveConnectionsCount()})
 		})
 	}
+	router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "live"}) })
+	router.GET("/readyz", func(c *gin.Context) {
+		probeCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if err := kafkaPublisher.Ready(probeCtx, kafkaBroker); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "dependency": "kafka", "error": err.Error()})
+			return
+		}
+		if err := healthRedis.Ping(probeCtx).Err(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "dependency": "redis", "error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ready"})
+	})
 
 	port := ":" + cfg.Server.GatewayPort
 	srv := &http.Server{Addr: port, Handler: router}
@@ -269,4 +291,11 @@ func startDashboardSubscriber(redisURL string, dashboardRegistry *handler.Dashbo
 	for msg := range pubsub.Channel() {
 		dashboardRegistry.BroadcastToUIs(msg.Payload)
 	}
+}
+
+func getEnvFallback(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }

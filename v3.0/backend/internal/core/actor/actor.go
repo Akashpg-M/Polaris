@@ -8,6 +8,7 @@ import (
 	"time"
 
 	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
+	"github.com/Akashpg-M/polaris/backend/internal/core/events"
 )
 
 var ErrMailboxSaturated = errors.New("actor_mailbox_saturation_backpressure")
@@ -27,11 +28,11 @@ type AssetActor struct {
 	eventPublisher EventPublisher
 
 	// State Boundary (Zero Shared Access)
-	lat            float64
-	lon            float64
-	energyPercent  int32
-	currentTask    string
-	lastPingMilli  int64
+	lat           float64
+	lon           float64
+	energyPercent int32
+	currentTask   string
+	lastPingMilli int64
 }
 
 // NewAssetActor configures a state-isolated entity with strict backpressure limits
@@ -81,7 +82,7 @@ func (a *AssetActor) eventLoop() {
 func (a *AssetActor) process(msg interface{}) {
 	switch m := msg.(type) {
 	case TelemetryMsg:
-		a.handleTelemetry(m.Payload)
+		a.handleTelemetry(m.Payload, m.Envelope)
 	case CommandMsg:
 		a.handleCommand(m)
 	default:
@@ -89,7 +90,7 @@ func (a *AssetActor) process(msg interface{}) {
 	}
 }
 
-func (a *AssetActor) handleTelemetry(p *pb.SpatialObject) {
+func (a *AssetActor) handleTelemetry(p *pb.SpatialObject, envelope *events.TelemetryEnvelope) {
 	a.mu.Lock()
 	a.lat = p.Lat
 	a.lon = p.Lon
@@ -97,18 +98,16 @@ func (a *AssetActor) handleTelemetry(p *pb.SpatialObject) {
 	a.lastPingMilli = p.Timestamp
 	a.mu.Unlock()
 
-	// Emit immutable mutation record down to the cluster event stream
-	event := AssetStateChangedEvent{
-		AssetID:        a.id,
-		Lat:            p.Lat,
-		Lon:            p.Lon,
-		EnergyPercent:  p.EnergyPercent,
-		VelocityMps:    p.VelocityMps,
-		HeadingDeg:     p.HeadingDeg,
-		TimestampMilli: time.Now().UnixMilli(),
+	// Preserve the canonical protobuf at the event boundary. Downstream consumers
+	// need tenant, type, status, and motion fields, not a lossy projection.
+	if p.Timestamp == 0 {
+		p.Timestamp = time.Now().UnixMilli()
 	}
-
-	if err := a.eventPublisher.PublishEvent(a.ctx, "spatial:updates", event); err != nil {
+	var event interface{} = p // retained for internal actor tests
+	if envelope != nil {
+		event = envelope
+	} // gateway always supplies an envelope
+	if err := a.eventPublisher.PublishEvent(a.ctx, "telemetry.ingress", event); err != nil {
 		slog.Error("[Actor System] Failed to project state change", "actor_id", a.id, "error", err)
 	}
 }

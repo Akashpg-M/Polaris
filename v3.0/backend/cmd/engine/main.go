@@ -17,8 +17,8 @@ import (
 	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
 	"github.com/Akashpg-M/polaris/backend/internal/application/stream"
 	"github.com/Akashpg-M/polaris/backend/internal/config"
-	redisinfra "github.com/Akashpg-M/polaris/backend/internal/infra/redis"
 	"github.com/Akashpg-M/polaris/backend/internal/infra/osm"
+	redisinfra "github.com/Akashpg-M/polaris/backend/internal/infra/redis"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -45,7 +45,7 @@ func main() {
 	if err != nil {
 		slog.Warn("OSM Graph initialization failed. Routing API will be offline.", "error", err)
 		// If you don't have the file yet, we initialize an empty graph so the server doesn't crash
-		roadNetwork = graph.NewRoadNetwork() 
+		roadNetwork = graph.NewRoadNetwork()
 	}
 
 	engine := spatial.NewEngine()
@@ -61,28 +61,22 @@ func main() {
 		kafkaBroker = "localhost:9092"
 	}
 
-	kafkaConsumer := stream.NewKafkaConsumer(kafkaBroker, engine)
-	go kafkaConsumer.Start(ctx, "engine-node-1")
-
-	// FIXED: Using the new Kafka-based archiver and passing the Kafka broker URL instead of Redis
-	archiver, err := stream.NewKafkaPostgresArchiver(kafkaBroker, cfg.DB.URL)
-	if err != nil {
-		slog.Warn("Kafka/PostgreSQL Archiver offline...")
-	} else {
-		go archiver.Start(ctx)
-	}
-
-
-	if roadNetwork != nil {
-		trafficAnalyzer := stream.NewTrafficAnalyzer(kafkaBroker, roadNetwork)
-		go trafficAnalyzer.Start(ctx)
-	}
-
 	redisClient, err := redisinfra.NewClient(cfg.Redis.URL)
 	if err != nil {
 		panic("Cannot start engine without Redis: " + err.Error())
 	}
 	commander := &RedisCommander{client: redisClient}
+	kafkaConsumer := stream.NewKafkaConsumer(kafkaBroker, engine, redisClient)
+	go kafkaConsumer.Start(ctx, "engine-node-1")
+	archiver, err := stream.NewKafkaPostgresArchiver(kafkaBroker, cfg.DB.URL)
+	if err != nil {
+		slog.Warn("Kafka/PostgreSQL Archiver offline", "error", err)
+	} else {
+		go archiver.Start(ctx)
+	}
+	if roadNetwork != nil {
+		go stream.NewTrafficAnalyzer(kafkaBroker, roadNetwork).Start(ctx)
+	}
 
 	predictiveStrategy, err := orchestrator.NewPredictiveZoneStrategy(cfg.DB.URL)
 	if err != nil {
@@ -114,6 +108,30 @@ func main() {
 			}
 		})
 	}
+	router.GET("/healthz", func(c *gin.Context) {
+		if !kafkaConsumer.Healthy() || (archiver != nil && !archiver.Healthy()) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "live"})
+	})
+	router.GET("/readyz", func(c *gin.Context) {
+		probeCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if err := kafkaConsumer.Ready(probeCtx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "dependency": "kafka_or_redis", "error": err.Error()})
+			return
+		}
+		if archiver == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "dependency": "postgres_archiver"})
+			return
+		}
+		if err := archiver.Ready(probeCtx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "dependency": "postgres", "error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ready"})
+	})
 
 	// 4. Start Server with Graceful Shutdown
 	port := ":" + cfg.Server.EnginePort
@@ -136,6 +154,14 @@ func main() {
 
 	srv.Shutdown(ctxShutdown)
 	cancel() // Stops background context (workers)
+	if err := kafkaConsumer.Wait(ctxShutdown); err != nil {
+		slog.Error("Spatial consumer shutdown timed out", "error", err)
+	}
+	if archiver != nil {
+		if err := archiver.Wait(ctxShutdown); err != nil {
+			slog.Error("Archive consumer shutdown timed out", "error", err)
+		}
+	}
 	redisClient.Close()
 	slog.Info("Engine safely terminated.")
 }

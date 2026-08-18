@@ -32,5 +32,13 @@ message SpatialObject {
   double velocity_mps = 7; 
   double heading_deg = 8;  
   int32 energy_percent = 9; // Generates as .EnergyPercent in Go
-  int64 timestamp = 10;     // Generates as .Timestamp in Go (Unix Milliseconds/Seconds)
+  int64 timestamp = 10 [deprecated = true]; // Legacy observed-at alias (Unix milliseconds)
+
+  // Device-owned ordering identity. The gateway validates these fields and
+  // wraps this frame in the canonical platform envelope.
+  string device_boot_id = 11;
+  uint64 sequence_number = 12;
+  int64 boot_started_at = 13; // Unix milliseconds
+  int64 observed_at = 14;     // Unix milliseconds
+  uint32 schema_version = 15;
 }

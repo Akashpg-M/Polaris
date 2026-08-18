@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.35.0
-// source: v1/spatial.proto
+// source: api/proto/v1/spatial.proto
 
 package v1
 
@@ -69,11 +69,11 @@ func (x NodeType) String() string {
 }
 
 func (NodeType) Descriptor() protoreflect.EnumDescriptor {
-	return file_v1_spatial_proto_enumTypes[0].Descriptor()
+	return file_api_proto_v1_spatial_proto_enumTypes[0].Descriptor()
 }
 
 func (NodeType) Type() protoreflect.EnumType {
-	return &file_v1_spatial_proto_enumTypes[0]
+	return &file_api_proto_v1_spatial_proto_enumTypes[0]
 }
 
 func (x NodeType) Number() protoreflect.EnumNumber {
@@ -82,7 +82,7 @@ func (x NodeType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use NodeType.Descriptor instead.
 func (NodeType) EnumDescriptor() ([]byte, []int) {
-	return file_v1_spatial_proto_rawDescGZIP(), []int{0}
+	return file_api_proto_v1_spatial_proto_rawDescGZIP(), []int{0}
 }
 
 type NodeStatus int32
@@ -127,11 +127,11 @@ func (x NodeStatus) String() string {
 }
 
 func (NodeStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_v1_spatial_proto_enumTypes[1].Descriptor()
+	return file_api_proto_v1_spatial_proto_enumTypes[1].Descriptor()
 }
 
 func (NodeStatus) Type() protoreflect.EnumType {
-	return &file_v1_spatial_proto_enumTypes[1]
+	return &file_api_proto_v1_spatial_proto_enumTypes[1]
 }
 
 func (x NodeStatus) Number() protoreflect.EnumNumber {
@@ -140,7 +140,7 @@ func (x NodeStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use NodeStatus.Descriptor instead.
 func (NodeStatus) EnumDescriptor() ([]byte, []int) {
-	return file_v1_spatial_proto_rawDescGZIP(), []int{1}
+	return file_api_proto_v1_spatial_proto_rawDescGZIP(), []int{1}
 }
 
 type SpatialObject struct {
@@ -154,14 +154,22 @@ type SpatialObject struct {
 	VelocityMps   float64                `protobuf:"fixed64,7,opt,name=velocity_mps,json=velocityMps,proto3" json:"velocity_mps,omitempty"`
 	HeadingDeg    float64                `protobuf:"fixed64,8,opt,name=heading_deg,json=headingDeg,proto3" json:"heading_deg,omitempty"`
 	EnergyPercent int32                  `protobuf:"varint,9,opt,name=energy_percent,json=energyPercent,proto3" json:"energy_percent,omitempty"` // Generates as .EnergyPercent in Go
-	Timestamp     int64                  `protobuf:"varint,10,opt,name=timestamp,proto3" json:"timestamp,omitempty"`                             // Generates as .Timestamp in Go (Unix Milliseconds/Seconds)
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Deprecated: Marked as deprecated in api/proto/v1/spatial.proto.
+	Timestamp int64 `protobuf:"varint,10,opt,name=timestamp,proto3" json:"timestamp,omitempty"` // Legacy observed-at alias (Unix milliseconds)
+	// Device-owned ordering identity. The gateway validates these fields and
+	// wraps this frame in the canonical platform envelope.
+	DeviceBootId   string `protobuf:"bytes,11,opt,name=device_boot_id,json=deviceBootId,proto3" json:"device_boot_id,omitempty"`
+	SequenceNumber uint64 `protobuf:"varint,12,opt,name=sequence_number,json=sequenceNumber,proto3" json:"sequence_number,omitempty"`
+	BootStartedAt  int64  `protobuf:"varint,13,opt,name=boot_started_at,json=bootStartedAt,proto3" json:"boot_started_at,omitempty"` // Unix milliseconds
+	ObservedAt     int64  `protobuf:"varint,14,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`            // Unix milliseconds
+	SchemaVersion  uint32 `protobuf:"varint,15,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SpatialObject) Reset() {
 	*x = SpatialObject{}
-	mi := &file_v1_spatial_proto_msgTypes[0]
+	mi := &file_api_proto_v1_spatial_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -173,7 +181,7 @@ func (x *SpatialObject) String() string {
 func (*SpatialObject) ProtoMessage() {}
 
 func (x *SpatialObject) ProtoReflect() protoreflect.Message {
-	mi := &file_v1_spatial_proto_msgTypes[0]
+	mi := &file_api_proto_v1_spatial_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -186,7 +194,7 @@ func (x *SpatialObject) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpatialObject.ProtoReflect.Descriptor instead.
 func (*SpatialObject) Descriptor() ([]byte, []int) {
-	return file_v1_spatial_proto_rawDescGZIP(), []int{0}
+	return file_api_proto_v1_spatial_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *SpatialObject) GetId() string {
@@ -252,6 +260,7 @@ func (x *SpatialObject) GetEnergyPercent() int32 {
 	return 0
 }
 
+// Deprecated: Marked as deprecated in api/proto/v1/spatial.proto.
 func (x *SpatialObject) GetTimestamp() int64 {
 	if x != nil {
 		return x.Timestamp
@@ -259,11 +268,46 @@ func (x *SpatialObject) GetTimestamp() int64 {
 	return 0
 }
 
-var File_v1_spatial_proto protoreflect.FileDescriptor
+func (x *SpatialObject) GetDeviceBootId() string {
+	if x != nil {
+		return x.DeviceBootId
+	}
+	return ""
+}
 
-const file_v1_spatial_proto_rawDesc = "" +
+func (x *SpatialObject) GetSequenceNumber() uint64 {
+	if x != nil {
+		return x.SequenceNumber
+	}
+	return 0
+}
+
+func (x *SpatialObject) GetBootStartedAt() int64 {
+	if x != nil {
+		return x.BootStartedAt
+	}
+	return 0
+}
+
+func (x *SpatialObject) GetObservedAt() int64 {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return 0
+}
+
+func (x *SpatialObject) GetSchemaVersion() uint32 {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return 0
+}
+
+var File_api_proto_v1_spatial_proto protoreflect.FileDescriptor
+
+const file_api_proto_v1_spatial_proto_rawDesc = "" +
 	"\n" +
-	"\x10v1/spatial.proto\x12\x12polaris.spatial.v1\"\xd3\x02\n" +
+	"\x1aapi/proto/v1/spatial.proto\x12\x12polaris.spatial.v1\"\x96\x04\n" +
 	"\rSpatialObject\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x120\n" +
@@ -274,9 +318,15 @@ const file_v1_spatial_proto_rawDesc = "" +
 	"\fvelocity_mps\x18\a \x01(\x01R\vvelocityMps\x12\x1f\n" +
 	"\vheading_deg\x18\b \x01(\x01R\n" +
 	"headingDeg\x12%\n" +
-	"\x0eenergy_percent\x18\t \x01(\x05R\renergyPercent\x12\x1c\n" +
+	"\x0eenergy_percent\x18\t \x01(\x05R\renergyPercent\x12 \n" +
 	"\ttimestamp\x18\n" +
-	" \x01(\x03R\ttimestamp*\xb8\x01\n" +
+	" \x01(\x03B\x02\x18\x01R\ttimestamp\x12$\n" +
+	"\x0edevice_boot_id\x18\v \x01(\tR\fdeviceBootId\x12'\n" +
+	"\x0fsequence_number\x18\f \x01(\x04R\x0esequenceNumber\x12&\n" +
+	"\x0fboot_started_at\x18\r \x01(\x03R\rbootStartedAt\x12\x1f\n" +
+	"\vobserved_at\x18\x0e \x01(\x03R\n" +
+	"observedAt\x12%\n" +
+	"\x0eschema_version\x18\x0f \x01(\rR\rschemaVersion*\xb8\x01\n" +
 	"\bNodeType\x12\x15\n" +
 	"\x11NODE_TYPE_UNKNOWN\x10\x00\x12\x12\n" +
 	"\x0eNODE_TYPE_BIKE\x10\x01\x12\x12\n" +
@@ -296,25 +346,25 @@ const file_v1_spatial_proto_rawDesc = "" +
 	"\x13NODE_STATUS_OFFLINE\x10\x05B8Z6github.com/Akashpg-M/polaris/v3.0/backend/api/proto/v1b\x06proto3"
 
 var (
-	file_v1_spatial_proto_rawDescOnce sync.Once
-	file_v1_spatial_proto_rawDescData []byte
+	file_api_proto_v1_spatial_proto_rawDescOnce sync.Once
+	file_api_proto_v1_spatial_proto_rawDescData []byte
 )
 
-func file_v1_spatial_proto_rawDescGZIP() []byte {
-	file_v1_spatial_proto_rawDescOnce.Do(func() {
-		file_v1_spatial_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_v1_spatial_proto_rawDesc), len(file_v1_spatial_proto_rawDesc)))
+func file_api_proto_v1_spatial_proto_rawDescGZIP() []byte {
+	file_api_proto_v1_spatial_proto_rawDescOnce.Do(func() {
+		file_api_proto_v1_spatial_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_api_proto_v1_spatial_proto_rawDesc), len(file_api_proto_v1_spatial_proto_rawDesc)))
 	})
-	return file_v1_spatial_proto_rawDescData
+	return file_api_proto_v1_spatial_proto_rawDescData
 }
 
-var file_v1_spatial_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_v1_spatial_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
-var file_v1_spatial_proto_goTypes = []any{
+var file_api_proto_v1_spatial_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_api_proto_v1_spatial_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_api_proto_v1_spatial_proto_goTypes = []any{
 	(NodeType)(0),         // 0: polaris.spatial.v1.NodeType
 	(NodeStatus)(0),       // 1: polaris.spatial.v1.NodeStatus
 	(*SpatialObject)(nil), // 2: polaris.spatial.v1.SpatialObject
 }
-var file_v1_spatial_proto_depIdxs = []int32{
+var file_api_proto_v1_spatial_proto_depIdxs = []int32{
 	0, // 0: polaris.spatial.v1.SpatialObject.type:type_name -> polaris.spatial.v1.NodeType
 	1, // 1: polaris.spatial.v1.SpatialObject.status:type_name -> polaris.spatial.v1.NodeStatus
 	2, // [2:2] is the sub-list for method output_type
@@ -324,27 +374,27 @@ var file_v1_spatial_proto_depIdxs = []int32{
 	0, // [0:2] is the sub-list for field type_name
 }
 
-func init() { file_v1_spatial_proto_init() }
-func file_v1_spatial_proto_init() {
-	if File_v1_spatial_proto != nil {
+func init() { file_api_proto_v1_spatial_proto_init() }
+func file_api_proto_v1_spatial_proto_init() {
+	if File_api_proto_v1_spatial_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_v1_spatial_proto_rawDesc), len(file_v1_spatial_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_v1_spatial_proto_rawDesc), len(file_api_proto_v1_spatial_proto_rawDesc)),
 			NumEnums:      2,
 			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_v1_spatial_proto_goTypes,
-		DependencyIndexes: file_v1_spatial_proto_depIdxs,
-		EnumInfos:         file_v1_spatial_proto_enumTypes,
-		MessageInfos:      file_v1_spatial_proto_msgTypes,
+		GoTypes:           file_api_proto_v1_spatial_proto_goTypes,
+		DependencyIndexes: file_api_proto_v1_spatial_proto_depIdxs,
+		EnumInfos:         file_api_proto_v1_spatial_proto_enumTypes,
+		MessageInfos:      file_api_proto_v1_spatial_proto_msgTypes,
 	}.Build()
-	File_v1_spatial_proto = out.File
-	file_v1_spatial_proto_goTypes = nil
-	file_v1_spatial_proto_depIdxs = nil
+	File_api_proto_v1_spatial_proto = out.File
+	file_api_proto_v1_spatial_proto_goTypes = nil
+	file_api_proto_v1_spatial_proto_depIdxs = nil
 }

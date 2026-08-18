@@ -10,11 +10,11 @@ import (
 
 // MockPublisherSpy captures events to verify replay validity
 type MockPublisherSpy struct {
-	PublishedEvents []AssetStateChangedEvent
+	PublishedEvents []*pb.SpatialObject
 }
 
 func (m *MockPublisherSpy) PublishEvent(ctx context.Context, topic string, event interface{}) error {
-	if e, ok := event.(AssetStateChangedEvent); ok {
+	if e, ok := event.(*pb.SpatialObject); ok {
 		m.PublishedEvents = append(m.PublishedEvents, e)
 	}
 	return nil
@@ -47,10 +47,10 @@ func TestActorCrashAndStateReplayRecovery(t *testing.T) {
 
 	// 2. Simulate Node Recovery Recovery Pipeline
 	recoveredActor := NewAssetActor(assetID, spy, 10)
-	
+
 	// Replay history sequentially back into the fresh actor memory boundary
 	historicalEvent := spy.PublishedEvents[0]
-	
+
 	recoveredActor.lat = historicalEvent.Lat
 	recoveredActor.lon = historicalEvent.Lon
 	recoveredActor.energyPercent = historicalEvent.EnergyPercent
