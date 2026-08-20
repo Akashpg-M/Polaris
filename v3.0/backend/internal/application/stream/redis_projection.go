@@ -8,6 +8,7 @@ import (
 
 	"github.com/Akashpg-M/polaris/backend/internal/application/spatial"
 	"github.com/Akashpg-M/polaris/backend/internal/core/events"
+	twincore "github.com/Akashpg-M/polaris/backend/internal/core/twin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -51,7 +52,9 @@ redis.call('HSET', KEYS[1],
   'event_id', ARGV[4],
   'reported_state', ARGV[5],
   'last_seen_at', ARGV[6],
-  'connectivity_status', 'ONLINE')
+  'connectivity_status', 'ONLINE',
+  'component:spatial/v1', ARGV[9],
+  'component:battery/v1', ARGV[10])
 redis.call('ZADD', KEYS[3], ARGV[6], ARGV[8])
 redis.call('PUBLISH', ARGV[7], ARGV[5])
 return classification
@@ -81,8 +84,21 @@ func (p *RedisProjector) Apply(ctx context.Context, e *events.TelemetryEnvelope)
 		return "", err
 	}
 	key := fmt.Sprintf("polaris:twin:%s:%s", e.TenantID, e.DeviceID)
+	mobilityProfile := "ROAD_VEHICLE"
+	if e.Payload.Type == 5 {
+		mobilityProfile = "AERIAL_DRONE"
+	} else if e.Payload.Type == 6 {
+		mobilityProfile = "GROUND_ROBOT"
+	} else if e.Payload.Type == 7 {
+		mobilityProfile = "STATIC"
+	}
+	spatialPayload, _ := json.Marshal(map[string]interface{}{"latitude": e.Payload.Lat, "longitude": e.Payload.Lon, "heading_degrees": e.Payload.HeadingDeg, "speed_mps": e.Payload.VelocityMps, "mobility_profile": mobilityProfile})
+	batteryPayload, _ := json.Marshal(map[string]interface{}{"percent": e.Payload.EnergyPercent})
+	observedAt := time.UnixMilli(e.ObservedAt).UTC()
+	spatialComponent, _ := json.Marshal(twincore.ComponentEnvelope{Type: "spatial/v1", SchemaVersion: 1, ObservedAt: observedAt, BootID: e.DeviceBootID, SequenceNumber: e.SequenceNumber, Payload: spatialPayload})
+	batteryComponent, _ := json.Marshal(twincore.ComponentEnvelope{Type: "battery/v1", SchemaVersion: 1, ObservedAt: observedAt, BootID: e.DeviceBootID, SequenceNumber: e.SequenceNumber, Payload: batteryPayload})
 	result, err := latestStateScript.Run(ctx, p.client, []string{key, key + ":retired_boots", "polaris:devices:last-seen"},
-		e.DeviceBootID, e.BootStartedAt, e.SequenceNumber, e.EventID, string(data), time.Now().UTC().UnixMilli(), DashboardUpdatesChannel, e.TenantID+":"+e.DeviceID).Text()
+		e.DeviceBootID, e.BootStartedAt, e.SequenceNumber, e.EventID, string(data), time.Now().UTC().UnixMilli(), DashboardUpdatesChannel, e.TenantID+":"+e.DeviceID, string(spatialComponent), string(batteryComponent)).Text()
 	return spatial.Classification(result), err
 }
 

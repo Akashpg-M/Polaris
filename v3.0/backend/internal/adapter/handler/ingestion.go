@@ -12,7 +12,6 @@ import (
 	"time"
 
 	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
-	"github.com/Akashpg-M/polaris/backend/internal/core/actor"
 	"github.com/Akashpg-M/polaris/backend/internal/core/auth"
 	"github.com/Akashpg-M/polaris/backend/internal/core/command"
 	"github.com/Akashpg-M/polaris/backend/internal/core/events"
@@ -26,11 +25,17 @@ var upgrader = websocket.Upgrader{
 }
 
 type IngestionHandler struct {
-	// Replacing legacy publisher interface with our new Actor Partition Registry
-	actorRegistry *actor.ActorRegistry
+	publisher     TelemetryEventPublisher
 	activeSockets int64
 	authenticator DeviceAuthenticator
 	connections   *DeviceConnectionManager
+}
+
+// TelemetryEventPublisher is the durable ingress boundary. The gateway does
+// not own a second per-device state machine; accepted frames are synchronously
+// appended to Kafka and backpressure is propagated to the socket.
+type TelemetryEventPublisher interface {
+	PublishEvent(context.Context, string, interface{}) error
 }
 
 type DeviceAuthenticator interface {
@@ -39,9 +44,9 @@ type DeviceAuthenticator interface {
 	RevalidateDevice(context.Context, auth.DevicePrincipal) error
 }
 
-func NewIngestionHandler(reg *actor.ActorRegistry, authenticator DeviceAuthenticator, connections *DeviceConnectionManager) *IngestionHandler {
+func NewIngestionHandler(publisher TelemetryEventPublisher, authenticator DeviceAuthenticator, connections *DeviceConnectionManager) *IngestionHandler {
 	return &IngestionHandler{
-		actorRegistry: reg,
+		publisher:     publisher,
 		activeSockets: 0, // High-performance, lock-free counter
 		authenticator: authenticator,
 		connections:   connections,
@@ -75,8 +80,9 @@ func (h *IngestionHandler) HandleIoTConnection(c *gin.Context) {
 	atomic.AddInt64(&h.activeSockets, 1)
 	defer atomic.AddInt64(&h.activeSockets, -1)
 
-	nodeID, tenantID := principal.DeviceID, principal.TenantID
+	nodeID := principal.DeviceID
 	var bootID string
+	lastRevalidationSuccess := time.Now()
 
 	for {
 		// 1. Read Raw Binary format matching pure Protobuf specs
@@ -86,8 +92,21 @@ func (h *IngestionHandler) HandleIoTConnection(c *gin.Context) {
 		}
 
 		if err := h.authenticator.RevalidateDevice(c.Request.Context(), principal); err != nil {
-			session.close(websocket.ClosePolicyViolation, "credential or device was revoked")
-			return
+			if errors.Is(err, auth.ErrInvalidCredential) {
+				session.close(websocket.ClosePolicyViolation, "credential or device was revoked")
+				return
+			}
+			// A registry transport failure is not evidence of revocation. Keep an
+			// already-authenticated session for a bounded grace period while
+			// readiness removes this gateway from new connection traffic.
+			if time.Since(lastRevalidationSuccess) >= 30*time.Second {
+				slog.Warn("device revalidation grace expired", "tenant_id", principal.TenantID, "device_id", principal.DeviceID, "error", err)
+				session.close(websocket.CloseTryAgainLater, "device registry temporarily unavailable")
+				return
+			}
+			slog.Warn("device revalidation transient failure", "tenant_id", principal.TenantID, "device_id", principal.DeviceID, "error", err)
+		} else {
+			lastRevalidationSuccess = time.Now()
 		}
 		if msgType == websocket.TextMessage {
 			if err := h.handleDeviceControl(c.Request.Context(), principal, data); err != nil {
@@ -116,6 +135,10 @@ func (h *IngestionHandler) HandleIoTConnection(c *gin.Context) {
 			rejectFrame(conn, "payload identity does not match authenticated device")
 			return
 		}
+		if !telemetryTypeAllowed(principal.DeviceType, payload.Type) {
+			rejectFrame(conn, "telemetry type does not match registered device type")
+			return
+		}
 		// The principal, not the untrusted frame, owns platform identity.
 		payload.Id = principal.DeviceID
 		payload.TenantId = principal.TenantID
@@ -137,24 +160,35 @@ func (h *IngestionHandler) HandleIoTConnection(c *gin.Context) {
 		envelope := events.NewTelemetryEnvelope(&payload, ingestedAt,
 			c.GetHeader("X-Correlation-ID"), c.GetHeader("X-Causation-ID"), c.GetHeader("traceparent"))
 
-		// 3. ROUTING LAYER BOUNDARY: Fetch actor and push payload to its inbox mailbox channel
-		assetActor := h.actorRegistry.GetOrCreate(tenantID + ":" + nodeID)
-
-		// Enforce backpressure safety loops
-		if err := assetActor.Push(actor.TelemetryMsg{Payload: &payload, Envelope: envelope}); err != nil {
-			if errors.Is(err, actor.ErrMailboxSaturated) {
-				slog.Error("[Gateway] System backpressure hit, dropping frame to preserve stability", "node_id", nodeID)
-				// Optional: In a critical system, you can signal the edge drone to back off here
-			}
-			continue
+		// Kafka is the sole durable telemetry boundary. A publication failure is
+		// surfaced by closing the connection so the device can reconnect/replay.
+		if err := h.publisher.PublishEvent(c.Request.Context(), "telemetry.ingress", envelope); err != nil {
+			slog.Error("[Gateway] Kafka telemetry publication failed", "node_id", nodeID, "error", err)
+			session.close(websocket.CloseTryAgainLater, "telemetry publication unavailable")
+			return
 		}
 	}
 
 	// Clean up runtime structures safely if the persistent socket drops
 	if nodeID != "" {
 		slog.Info("[Gateway] Telemetry channel closed at edge boundary", "node_id", nodeID)
-		// NOTE: In an event-sourced distributed control system, we do NOT destroy the actor immediately
-		// because the actor might still have pending messages to clear in its channel mailbox queue!
+	}
+}
+
+func telemetryTypeAllowed(deviceType string, nodeType pb.NodeType) bool {
+	switch deviceType {
+	case "delivery_drone":
+		return nodeType == pb.NodeType_NODE_TYPE_DRONE
+	case "ground_robot":
+		return nodeType == pb.NodeType_NODE_TYPE_ROBOT
+	case "connected_vehicle":
+		return nodeType == pb.NodeType_NODE_TYPE_BIKE || nodeType == pb.NodeType_NODE_TYPE_AUTO || nodeType == pb.NodeType_NODE_TYPE_SEDAN || nodeType == pb.NodeType_NODE_TYPE_SUV
+	case "fixed_iot_sensor", "static_camera":
+		return nodeType == pb.NodeType_NODE_TYPE_STATIC_SENSOR
+	default:
+		// Non-spatial device types must use a future type-specific telemetry
+		// schema instead of impersonating a SpatialObject profile.
+		return false
 	}
 }
 

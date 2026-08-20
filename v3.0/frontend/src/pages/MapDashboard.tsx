@@ -25,7 +25,7 @@ export default function MapDashboard() {
   const mapRef = useRef<MapState | null>(null);
   const markersCacheRef = useRef<MarkerCache>({});
   const [activeNodes, setActiveNodes] = useState(0);
-  const [latestNode, setLatestNode] = useState<{ id: string; lat: number; lon: number } | null>(null);
+  const [latestNode, setLatestNode] = useState<{ id: string; lat: number; lon: number; profile: string } | null>(null);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -80,10 +80,12 @@ export default function MapDashboard() {
 
           const { markersLayer, heatLayer } = mapRef.current;
           const cache = markersCacheRef.current;
-          const droneIcon = L.divIcon({ html: '🚁', className: 'custom-div-icon', iconSize: [24, 24] });
+          const profile = node.type === 7 ? 'STATIC' : node.type === 6 ? 'GROUND_ROBOT' : node.type === 5 ? 'AERIAL_DRONE' : 'ROAD_VEHICLE';
+          const markerGlyph = profile === 'STATIC' ? '●' : profile === 'ROAD_VEHICLE' ? '◆' : profile === 'GROUND_ROBOT' ? '■' : '▲';
+          const droneIcon = L.divIcon({ html: markerGlyph, className: 'custom-div-icon text-cyan-300', iconSize: [24, 24] });
 
           const now = Date.now();
-          setLatestNode({ id: node.id, lat: node.lat, lon: node.lon });
+          setLatestNode({ id: node.id, lat: node.lat, lon: node.lon, profile });
 
           if (cache[node.id]) {
             // Smoothly move the existing marker instead of deleting it (No layout flashing!)
@@ -196,6 +198,7 @@ export default function MapDashboard() {
           <div data-testid="latest-vehicle-coordinates" className="font-mono text-xs text-slate-300">
             {latestNode.lat.toFixed(6)}, {latestNode.lon.toFixed(6)}
           </div>
+          <div className="mt-1 text-[10px] tracking-wide text-emerald-300">{latestNode.profile}</div>
         </div>
       )}
       <div ref={containerRef} className="w-full h-full" />

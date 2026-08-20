@@ -16,13 +16,22 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const operatorPrincipalKey = "operator_principal"
+const (
+	operatorPrincipalKey = "operator_principal"
+	requestIDKey         = "request_id"
+)
 
 func RequestID(c *gin.Context) string {
+	if value, ok := c.Get(requestIDKey); ok {
+		if id, valid := value.(string); valid && id != "" {
+			return id
+		}
+	}
 	v := c.GetHeader("X-Request-ID")
 	if v == "" {
 		v = auth.NewID()
 	}
+	c.Set(requestIDKey, v)
 	return v
 }
 func Principal(c *gin.Context) (auth.OperatorPrincipal, bool) {
@@ -38,7 +47,10 @@ type RegistryAPI struct {
 	store                               *repository.RegistryStore
 	redis                               *redis.Client
 	staleAfter, offlineAfter, ticketTTL time.Duration
+	lifecycleHook                       func(tenant, device, status string)
 }
+
+func (a *RegistryAPI) SetLifecycleHook(fn func(tenant, device, status string)) { a.lifecycleHook = fn }
 
 func NewRegistryAPI(store *repository.RegistryStore, redisClient *redis.Client, staleAfter, offlineAfter, ticketTTL time.Duration) *RegistryAPI {
 	return &RegistryAPI{store: store, redis: redisClient, staleAfter: staleAfter, offlineAfter: offlineAfter, ticketTTL: ticketTTL}
@@ -183,6 +195,9 @@ func (a *RegistryAPI) patchTenant(c *gin.Context) {
 	if err := a.store.SetTenantStatus(c, c.Param("tenant_id"), in.Status, p.APIKeyID, RequestID(c)); err != nil {
 		registryError(c, err)
 		return
+	}
+	if a.lifecycleHook != nil {
+		a.lifecycleHook(c.Param("tenant_id"), "", in.Status)
 	}
 	apiData(c, 200, gin.H{"tenant_id": c.Param("tenant_id"), "status": in.Status})
 }
@@ -360,6 +375,9 @@ func (a *RegistryAPI) lifecycle(next string) gin.HandlerFunc {
 			registryError(c, err)
 			return
 		}
+		if a.lifecycleHook != nil {
+			a.lifecycleHook(tenant, c.Param("device_id"), next)
+		}
 		apiData(c, 200, gin.H{"device_id": c.Param("device_id"), "lifecycle_status": next})
 	}
 }
@@ -510,7 +528,16 @@ func (a *RegistryAPI) twin(ctx context.Context, tenant, id string) (gin.H, error
 	if raw := state["reported_state"]; raw != "" {
 		_ = json.Unmarshal([]byte(raw), &reported)
 	}
-	return gin.H{"tenant_id": tenant, "device_id": id, "device": device, "capabilities": caps, "reported_state": reported, "desired_state": nil, "connectivity": gin.H{"status": status, "last_seen_at": last}}, nil
+	components := map[string]interface{}{}
+	for field, raw := range state {
+		if strings.HasPrefix(field, "component:") {
+			var component interface{}
+			if json.Unmarshal([]byte(raw), &component) == nil {
+				components[strings.TrimPrefix(field, "component:")] = component
+			}
+		}
+	}
+	return gin.H{"tenant_id": tenant, "device_id": id, "device": device, "capabilities": caps, "reported_state": reported, "components": components, "desired_state": nil, "connectivity": gin.H{"status": status, "last_seen_at": last}}, nil
 }
 func (a *RegistryAPI) getTwin(c *gin.Context) {
 	tenant, _ := tenantFor(c)

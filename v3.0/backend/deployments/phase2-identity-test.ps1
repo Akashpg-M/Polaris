@@ -24,7 +24,7 @@ function Run-IdentityCheck([string]$mode) {
 }
 function Wait-Connectivity([string]$expected,[int]$timeoutSeconds) {
   $deadline=(Get-Date).AddSeconds($timeoutSeconds)
-  do { $current=Invoke-API GET "http://localhost:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/twin" $null $headers; if($current.data.connectivity.status-eq$expected){return $current}; Start-Sleep -Milliseconds 250 } while((Get-Date)-lt$deadline)
+  do { $current=Invoke-API GET "http://127.0.0.1:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/twin" $null $headers; if($current.data.connectivity.status-eq$expected){return $current}; Start-Sleep -Milliseconds 250 } while((Get-Date)-lt$deadline)
   throw "Expected $expected, got $($current.data.connectivity.status)"
 }
 
@@ -35,12 +35,12 @@ $env:OFFLINE_SCAN_INTERVAL="1s"
 $headers=@{Authorization="Bearer $($env:OPERATOR_TOKEN)";'X-Tenant-ID'='alpha_logistics'}
 
 Run-IdentityCheck "basic"
-$twin=Invoke-API GET "http://localhost:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/twin" $null $headers
+$twin=Invoke-API GET "http://127.0.0.1:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/twin" $null $headers
 if($twin.data.tenant_id-ne'alpha_logistics'-or $twin.data.reported_state.id-ne $env:SMOKE_DEVICE_ID){throw "Authenticated twin composition failed"}
 
 $oldToken=$env:DEVICE_TOKEN
 $oldID=$env:DEVICE_CREDENTIAL_ID
-$rotated=Invoke-API POST "http://localhost:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/credentials/rotate" @{credential_id=$oldID} $headers
+$rotated=Invoke-API POST "http://127.0.0.1:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/credentials/rotate" @{credential_id=$oldID} $headers
 $env:DEVICE_TOKEN=$oldToken
 Run-IdentityCheck "rejected"
 $env:DEVICE_TOKEN=$rotated.data.secret
@@ -54,7 +54,7 @@ Run-IdentityCheck "revoke-session"
 Run-IdentityCheck "rejected"
 
 $offline=Wait-Connectivity "OFFLINE" 15
-$recovery=Invoke-API POST "http://localhost:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/credentials" @{} $headers
+$recovery=Invoke-API POST "http://127.0.0.1:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/credentials" @{} $headers
 $env:DEVICE_TOKEN=$recovery.data.secret
 $env:DEVICE_CREDENTIAL_ID=$recovery.data.credential.credential_id
 $env:DEVICE_BOOT_ID="phase2-recovery-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
@@ -63,20 +63,20 @@ Run-IdentityCheck "send"
 $online=Wait-Connectivity "ONLINE" 10
 Run-IdentityCheck "ticket"
 
-Invoke-API POST "http://localhost:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/suspend" @{} $headers | Out-Null
+Invoke-API POST "http://127.0.0.1:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/suspend" @{} $headers | Out-Null
 Run-IdentityCheck "rejected"
-Invoke-API POST "http://localhost:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/activate" @{} $headers | Out-Null
-Invoke-API PATCH http://localhost:6081/api/v1/tenants/alpha_logistics @{status='SUSPENDED'} @{Authorization="Bearer $($env:OPERATOR_TOKEN)"} | Out-Null
+Invoke-API POST "http://127.0.0.1:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/activate" @{} $headers | Out-Null
+Invoke-API PATCH http://127.0.0.1:6081/api/v1/tenants/alpha_logistics @{status='SUSPENDED'} @{Authorization="Bearer $($env:OPERATOR_TOKEN)"} | Out-Null
 Run-IdentityCheck "rejected"
-Invoke-API PATCH http://localhost:6081/api/v1/tenants/alpha_logistics @{status='ACTIVE'} @{Authorization="Bearer $($env:OPERATOR_TOKEN)"} | Out-Null
+Invoke-API PATCH http://127.0.0.1:6081/api/v1/tenants/alpha_logistics @{status='ACTIVE'} @{Authorization="Bearer $($env:OPERATOR_TOKEN)"} | Out-Null
 
-try { Invoke-API POST http://localhost:6081/api/v1/tenants @{tenant_id='isolation_tenant';display_name='Isolation Tenant'} @{Authorization="Bearer $($env:OPERATOR_TOKEN)"}|Out-Null } catch { if($_.Exception.Response.StatusCode.value__-ne409){throw} }
+try { Invoke-API POST http://127.0.0.1:6081/api/v1/tenants @{tenant_id='isolation_tenant';display_name='Isolation Tenant'} @{Authorization="Bearer $($env:OPERATOR_TOKEN)"}|Out-Null } catch { if($_.Exception.Response.StatusCode.value__-ne409){throw} }
 $tenantBToken=New-RandomToken "op"
 $tenantBPrefix=($tenantBToken.Split('.')[0].Split('_')[-1])
 docker compose -f $composeFile exec -T postgres psql -U polaris_user -d polaris_core -v ON_ERROR_STOP=1 -c "INSERT INTO operator_api_keys(api_key_id,tenant_id,name,token_prefix,token_hash,role,status) VALUES(gen_random_uuid(),'isolation_tenant','isolation test','$tenantBPrefix',digest('$tenantBToken','sha256'),'TENANT_ADMIN','ACTIVE') ON CONFLICT(token_prefix) DO NOTHING" | Out-Null
-try { Invoke-API GET "http://localhost:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/twin" $null @{Authorization="Bearer $tenantBToken"}|Out-Null; throw "Cross-tenant twin was exposed" } catch { if($_.Exception.Response.StatusCode.value__-ne404){throw} }
+try { Invoke-API GET "http://127.0.0.1:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/twin" $null @{Authorization="Bearer $tenantBToken"}|Out-Null; throw "Cross-tenant twin was exposed" } catch { if($_.Exception.Response.StatusCode.value__-ne404){throw} }
 
-Invoke-API POST "http://localhost:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/decommission" @{} $headers | Out-Null
+Invoke-API POST "http://127.0.0.1:6081/api/v1/devices/$($env:SMOKE_DEVICE_ID)/decommission" @{} $headers | Out-Null
 Run-IdentityCheck "rejected"
 
 docker compose -f $composeFile run --rm postgres-migrate | Out-Null

@@ -30,6 +30,10 @@ func NewKafkaPostgresArchiver(brokerURL, postgresURL string) (*KafkaPostgresArch
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	a := &KafkaPostgresArchiver{
 		reader: kafka.NewReader(kafka.ReaderConfig{Brokers: []string{brokerURL}, Topic: KafkaTelemetryTopic, GroupID: "polaris_archive_group", CommitInterval: 0}),
 		writer: &kafka.Writer{Addr: kafka.TCP(brokerURL), Topic: DeadLetterTopic, Balancer: &kafka.Hash{}},

@@ -46,7 +46,7 @@ func main() {
 func connect(token string) *websocket.Conn {
 	h := http.Header{}
 	h.Set("Authorization", "Bearer "+token)
-	c, r, err := websocket.DefaultDialer.Dial(env("GATEWAY_URL", "ws://localhost:6080")+"/ws/telemetry", h)
+	c, r, err := websocket.DefaultDialer.Dial(env("GATEWAY_URL", "ws://127.0.0.1:6080")+"/ws/telemetry", h)
 	if err != nil {
 		if r != nil {
 			panic(fmt.Sprintf("WebSocket rejected: %d", r.StatusCode))
@@ -58,7 +58,7 @@ func connect(token string) *websocket.Conn {
 func expectRejected(token string) {
 	h := http.Header{}
 	h.Set("Authorization", "Bearer "+token)
-	c, r, err := websocket.DefaultDialer.Dial(env("GATEWAY_URL", "ws://localhost:6080")+"/ws/telemetry", h)
+	c, r, err := websocket.DefaultDialer.Dial(env("GATEWAY_URL", "ws://127.0.0.1:6080")+"/ws/telemetry", h)
 	if c != nil {
 		c.Close()
 		panic("invalid/revoked credential connected")
@@ -93,7 +93,7 @@ func send(c *websocket.Conn, device, tenant string, seq uint64) {
 }
 func revoke() {
 	body := bytes.NewBufferString(`{}`)
-	url := env("ENGINE_URL", "http://localhost:6081") + "/api/v1/devices/" + mustEnv("SMOKE_DEVICE_ID") + "/credentials/" + mustEnv("DEVICE_CREDENTIAL_ID") + "/revoke"
+	url := env("ENGINE_URL", "http://127.0.0.1:6081") + "/api/v1/devices/" + mustEnv("SMOKE_DEVICE_ID") + "/credentials/" + mustEnv("DEVICE_CREDENTIAL_ID") + "/revoke"
 	req, _ := http.NewRequest(http.MethodPost, url, body)
 	req.Header.Set("Authorization", "Bearer "+mustEnv("OPERATOR_TOKEN"))
 	req.Header.Set("X-Tenant-ID", "alpha_logistics")
@@ -110,7 +110,7 @@ func revoke() {
 	}
 }
 func ticketCheck(device string) {
-	url := env("ENGINE_URL", "http://localhost:6081") + "/api/v1/devices/" + device + "/connection-ticket"
+	url := env("ENGINE_URL", "http://127.0.0.1:6081") + "/api/v1/devices/" + device + "/connection-ticket"
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBufferString(`{}`))
 	req.Header.Set("Authorization", "Bearer "+mustEnv("OPERATOR_TOKEN"))
 	req.Header.Set("X-Tenant-ID", "alpha_logistics")
@@ -129,7 +129,7 @@ func ticketCheck(device string) {
 	if r.StatusCode != 201 || body.Data.Ticket == "" {
 		panic("ticket issue failed")
 	}
-	target := env("GATEWAY_URL", "ws://localhost:6080") + "/ws/telemetry?ticket=" + body.Data.Ticket
+	target := env("GATEWAY_URL", "ws://127.0.0.1:6080") + "/ws/telemetry?ticket=" + body.Data.Ticket
 	c, _, err := websocket.DefaultDialer.Dial(target, nil)
 	if err != nil {
 		panic(err)

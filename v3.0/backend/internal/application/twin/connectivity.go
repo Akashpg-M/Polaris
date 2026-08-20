@@ -27,7 +27,10 @@ type Detector struct {
 	redis                    *redis.Client
 	writer                   *kafka.Writer
 	stale, offline, interval time.Duration
+	onTransition             func(tenant, device, status string)
 }
+
+func (d *Detector) SetTransitionHandler(fn func(tenant, device, status string)) { d.onTransition = fn }
 
 func NewDetector(client *redis.Client, broker string, stale, offline, interval time.Duration) *Detector {
 	return &Detector{redis: client, writer: &kafka.Writer{Addr: kafka.TCP(broker), Topic: "device.connectivity.v1", Balancer: &kafka.Hash{}}, stale: stale, offline: offline, interval: interval}
@@ -66,6 +69,9 @@ func (d *Detector) scan(ctx context.Context, next string, age time.Duration) {
 		changed, err := transitionScript.Run(ctx, d.redis, []string{key}, last, next).Int()
 		if err != nil || changed != 1 {
 			continue
+		}
+		if d.onTransition != nil {
+			d.onTransition(parts[0], parts[1], next)
 		}
 		sum := sha256.Sum256([]byte(member + ":" + next + ":" + last))
 		eventID := hex.EncodeToString(sum[:])

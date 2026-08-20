@@ -7,6 +7,7 @@ type Task = {
 type Command = {
   command_id: string; task_id: string; status: string; attempt_count: number;
   sequence_number: number; acknowledged_at?: string; completed_at?: string;
+  payload?: { route_id?: string; road_graph_version?: string; routing_snapshot_version?: number; distance_meters?: number; estimated_duration_ms?: number };
 };
 
 const api = import.meta.env.VITE_ENGINE_API || 'http://localhost:6081/api/v1';
@@ -73,7 +74,7 @@ export default function Tasks() {
           <td className="p-3"><div className="font-bold">{task.task_type}</div><div className="font-mono text-[10px] text-slate-500">{task.task_id}</div></td>
           <td><span className="rounded bg-slate-950 px-2 py-1">{task.status}</span>{task.failure_reason && <div className="mt-2 text-red-300">{task.failure_reason}</div>}</td>
           <td className="font-mono">{task.assigned_device_id || 'Awaiting eligible device'}</td>
-          <td>{related.length ? related.map(c => <div key={c.command_id} className="mb-1"><span className="text-cyan-300">#{c.sequence_number}</span> {c.status} · attempt {c.attempt_count}</div>) : 'No command created'}</td>
+          <td>{related.length ? related.map(c => <div key={c.command_id} className="mb-1"><span className="text-cyan-300">#{c.sequence_number}</span> {c.status} · attempt {c.attempt_count}{c.payload?.route_id && <div className="text-[10px] text-emerald-300">route {c.payload.route_id} · graph {c.payload.road_graph_version} · snapshot v{c.payload.routing_snapshot_version} · {(c.payload.distance_meters || 0).toFixed(0)} m</div>}</div>) : 'No command created'}</td>
           <td>{new Date(task.created_at).toLocaleTimeString()}</td>
           <td><button disabled={!['PENDING','ASSIGNED'].includes(task.status)} onClick={() => cancel(task.task_id)} className="text-red-300 disabled:text-slate-600">Cancel</button></td>
         </tr>})}</tbody>

@@ -29,6 +29,14 @@ func NewRegistryStore(postgresURL string) (*RegistryStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A process may host many concurrent device sessions, but PostgreSQL must
+	// see a bounded pool rather than one backend per socket. The gateway and
+	// engine each own one RegistryStore, so these limits also leave capacity
+	// for archival, migrations, and operator diagnostics.
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	return &RegistryStore{DB: db}, nil
 }
 func (s *RegistryStore) Close() error { return s.DB.Close() }
@@ -121,7 +129,10 @@ func (s *RegistryStore) ResolveDevice(ctx context.Context, raw string) (auth.Dev
 func (s *RegistryStore) RevalidateDevice(ctx context.Context, p auth.DevicePrincipal) error {
 	var ok bool
 	err := s.DB.GetContext(ctx, &ok, `SELECT c.status='ACTIVE' AND (c.expires_at IS NULL OR c.expires_at>NOW()) AND d.lifecycle_status='ACTIVE' AND t.status='ACTIVE' FROM device_credentials c JOIN devices d USING(tenant_id,device_id) JOIN tenants t USING(tenant_id) WHERE c.credential_id=$1 AND c.tenant_id=$2 AND c.device_id=$3`, p.CredentialID, p.TenantID, p.DeviceID)
-	if err != nil || !ok {
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return auth.ErrInvalidCredential
 	}
 	return nil
@@ -576,8 +587,11 @@ func (s *RegistryStore) ClaimOutbox(ctx context.Context, limit int) ([]OutboxEve
 	}
 	return events, tx.Commit()
 }
-func (s *RegistryStore) MarkOutboxPublished(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE outbox_events SET status='PUBLISHED',published_at=NOW(),last_error=NULL WHERE outbox_id=$1`, id)
+func (s *RegistryStore) MarkOutboxPublishedBatch(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := s.DB.ExecContext(ctx, `UPDATE outbox_events SET status='PUBLISHED',published_at=NOW(),last_error=NULL WHERE outbox_id=ANY($1)`, pq.Array(ids))
 	return err
 }
 func (s *RegistryStore) MarkOutboxFailed(ctx context.Context, id string, errText string) error {

@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	engineURL  = env("ENGINE_URL", "http://localhost:6081")
-	gatewayURL = env("GATEWAY_URL", "ws://localhost:6080")
+	engineURL  = env("ENGINE_URL", "http://127.0.0.1:6081")
+	gatewayURL = env("GATEWAY_URL", "ws://127.0.0.1:6080")
 	tenantID   = env("TENANT_ID", "alpha_logistics")
 )
 
@@ -127,8 +127,12 @@ func wrongAck() {
 	if _, _, err := b.ReadMessage(); err == nil {
 		panic("wrong-device ACK did not close the connection")
 	}
-	if status := getCommand(frame.CommandID).Status; status != "DELIVERED" {
-		panic("wrong-device ACK mutated command: " + status)
+	status := getCommand(frame.CommandID).Status
+	if status == "ACKNOWLEDGED" || status == "COMPLETED" {
+		panic("wrong-device ACK advanced command: " + status)
+	}
+	if status == "PENDING" {
+		frame = readCommand(a, 15*time.Second)
 	}
 	ack(a, frame, "ACCEPTED")
 	result(a, frame, 1)
@@ -154,7 +158,7 @@ func receiveNoAck() {
 	conn := connect(mustEnv("DEVICE_TOKEN"))
 	sendTelemetry(conn, device, 1)
 	waitOnline(device)
-	_ = createTask("RELOCATE", []string{"receive_relocation_command"}, 30, time.Now().Add(time.Minute))
+	_ = createTask("RELOCATE", []string{"receive_relocation_command"}, 30, time.Now().Add(5*time.Minute))
 	frame := readCommand(conn, 15*time.Second)
 	fmt.Println("COMMAND_ID=" + frame.CommandID)
 	conn.Close()

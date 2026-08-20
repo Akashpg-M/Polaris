@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"hash/fnv"
 	"log/slog"
 	"sync"
 	"time"
@@ -105,13 +107,31 @@ func (m *DeviceConnectionManager) heartbeat(ctx context.Context, session *device
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var refreshFailureStarted time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			ok, err := m.owners.Refresh(ctx, session.ownership)
-			if err != nil || !ok {
+			if err != nil {
+				if refreshFailureStarted.IsZero() {
+					refreshFailureStarted = time.Now()
+				}
+				// A single Redis timeout is not proof that fencing ownership was
+				// lost. Retry within the lease window; fail closed if Redis cannot
+				// confirm ownership for a full TTL.
+				if time.Since(refreshFailureStarted) < m.lease-interval {
+					slog.Warn("gateway ownership refresh transient failure", "tenant_id", session.principal.TenantID, "device_id", session.principal.DeviceID, "error", err)
+					continue
+				}
+				slog.Warn("gateway ownership lease expired during refresh failure", "tenant_id", session.principal.TenantID, "device_id", session.principal.DeviceID, "error", err)
+				session.close(websocket.ClosePolicyViolation, "gateway ownership lease lost")
+				return
+			}
+			refreshFailureStarted = time.Time{}
+			if !ok {
+				slog.Warn("gateway ownership fencing mismatch", "tenant_id", session.principal.TenantID, "device_id", session.principal.DeviceID)
 				session.close(websocket.ClosePolicyViolation, "gateway ownership lease lost")
 				return
 			}
@@ -131,8 +151,11 @@ func (m *DeviceConnectionManager) Deliver(ctx context.Context, envelope command.
 		return repository.ErrNotFound
 	}
 	if err := m.store.RevalidateDevice(ctx, session.principal); err != nil {
-		session.close(websocket.ClosePolicyViolation, "credential, tenant, or device is inactive")
-		return repository.ErrForbidden
+		if errors.Is(err, auth.ErrInvalidCredential) {
+			session.close(websocket.ClosePolicyViolation, "credential, tenant, or device is inactive")
+			return repository.ErrForbidden
+		}
+		return err
 	}
 	ok, err := m.owners.Owns(ctx, session.ownership)
 	if err != nil || !ok {
@@ -148,7 +171,9 @@ func (m *DeviceConnectionManager) Deliver(ctx context.Context, envelope command.
 	if err != nil || !ok {
 		return repository.ErrForbidden
 	}
-	if err = session.writeJSON(record.Envelope()); err != nil {
+	outgoing := record.Envelope()
+	outgoing.DeliveryObservation = envelope.DeliveryObservation
+	if err = session.writeJSON(outgoing); err != nil {
 		return err
 	}
 	m.metrics.CommandsDelivered.Add(1)
@@ -174,37 +199,41 @@ func (m *DeviceConnectionManager) ReconcileDevice(ctx context.Context, tenant, d
 func (m *DeviceConnectionManager) StartSubscriber(ctx context.Context) {
 	pubsub := m.redis.Subscribe(ctx, repository.GatewayCommandChannel(m.gatewayID))
 	defer pubsub.Close()
+	const workers = 16
+	queues := make([]chan command.Envelope, workers)
+	var workerWG sync.WaitGroup
+	for index := range queues {
+		queues[index] = make(chan command.Envelope, 64)
+		workerWG.Add(1)
+		go func(queue <-chan command.Envelope) {
+			defer workerWG.Done()
+			for envelope := range queue {
+				if err := m.Deliver(ctx, envelope); err != nil && err != repository.ErrNotFound && err != repository.ErrInvalidTransition && err != repository.ErrConflict {
+					slog.Warn("live command notification could not be delivered", "command_id", envelope.CommandID, "error", err)
+				}
+			}
+		}(queues[index])
+	}
+	defer func() {
+		for _, queue := range queues {
+			close(queue)
+		}
+		workerWG.Wait()
+	}()
 	for message := range pubsub.Channel() {
 		var envelope command.Envelope
 		if json.Unmarshal([]byte(message.Payload), &envelope) != nil || envelope.FrameType != "COMMAND" {
 			continue
 		}
-		if err := m.Deliver(ctx, envelope); err != nil && err != repository.ErrNotFound && err != repository.ErrInvalidTransition && err != repository.ErrConflict {
-			slog.Warn("live command notification could not be delivered", "command_id", envelope.CommandID, "error", err)
+		if envelope.DeliveryObservation != nil {
+			envelope.DeliveryObservation.GatewayReceivedAt = time.Now().UTC()
 		}
-	}
-}
-
-func (m *DeviceConnectionManager) StartReconciler(ctx context.Context, interval time.Duration) {
-	if interval < 100*time.Millisecond {
-		interval = time.Second
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(deviceKey(envelope.TenantID, envelope.DeviceID)))
 		select {
+		case queues[int(h.Sum32())%len(queues)] <- envelope:
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			m.mu.RLock()
-			devices := make([][2]string, 0, len(m.sessions))
-			for _, session := range m.sessions {
-				devices = append(devices, [2]string{session.principal.TenantID, session.principal.DeviceID})
-			}
-			m.mu.RUnlock()
-			for _, device := range devices {
-				go m.ReconcileDevice(ctx, device[0], device[1])
-			}
 		}
 	}
 }

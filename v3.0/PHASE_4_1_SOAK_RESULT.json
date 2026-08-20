@@ -1,0 +1,57 @@
+{
+  "connection_setup_us": 40426047,
+  "counters": {
+    "commands_delivered": 120,
+    "connected_at_end": 0,
+    "connection_errors": 0,
+    "connections_established": 1000,
+    "duplicate_deliveries": 0,
+    "duplicate_physical_executions": 0,
+    "identity_mutations": 0,
+    "physical_executions": 120,
+    "request_errors": 54,
+    "task_requests_attempted": 120,
+    "tasks_assigned_immediately": 109,
+    "tasks_created": 109,
+    "telemetry_sent": 7691
+  },
+  "devices": 1000,
+  "distribution": {
+    "ground_robot": 200,
+    "non_spatial": 150,
+    "road_vehicle": 400,
+    "static": 250
+  },
+  "duration": "45s",
+  "latency": {
+    "command_delivery": {
+      "count": 120,
+      "max_us": 7255096,
+      "p50_us": 2082268,
+      "p95_us": 6159159,
+      "p99_us": 6624370
+    },
+    "nearby_query": {
+      "count": 312,
+      "max_us": 2831005,
+      "p50_us": 61092,
+      "p95_us": 359999,
+      "p99_us": 1318993
+    },
+    "route": {
+      "count": 273,
+      "max_us": 2538220,
+      "p50_us": 68898,
+      "p95_us": 428235,
+      "p99_us": 961143
+    },
+    "task_creation_assignment": {
+      "count": 120,
+      "max_us": 4930199,
+      "p50_us": 488870,
+      "p95_us": 3643757,
+      "p99_us": 4316265
+    }
+  },
+  "measured_at": "2026-08-19T09:00:20.7847956Z"
+}

@@ -113,7 +113,7 @@ import type { LogEntry } from '../types/polaris';
 
 interface Polaris4Metrics {
   activeConnections: number;
-  mailboxSaturation: number;       // Tracks queue depth percentage
+  connectionUtilization: number;
   filterDampeningRatio: number;    // Suppressed micro-vibrations
   caSimulationLatencyMs: number;   // Cellular Automata compute time
   safetyApprovalRate: number;      // Ratio of validated safe paths
@@ -123,7 +123,7 @@ export default function SwarmTester() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [metrics, setMetrics] = useState<Polaris4Metrics>({
     activeConnections: 0,
-    mailboxSaturation: 0,
+    connectionUtilization: 0,
     filterDampeningRatio: 0,
     caSimulationLatencyMs: 0,
     safetyApprovalRate: 100
@@ -148,7 +148,7 @@ export default function SwarmTester() {
       setMetrics(prev => ({
         ...prev,
         activeConnections: currentUplinks,
-        mailboxSaturation: currentUplinks > 100 ? Math.floor((currentUplinks / 5000) * 100) : 0,
+        connectionUtilization: Math.min(100, Math.floor((currentUplinks / 5000) * 100)),
         filterDampeningRatio: currentUplinks > 0 ? parseFloat((4.2 + Math.random() * 2).toFixed(1)) : 0,
         caSimulationLatencyMs: currentUplinks > 0 ? parseFloat((3.1 + Math.random() * 1.5).toFixed(1)) : 0,
         safetyApprovalRate: currentUplinks > 200 ? 94 : 100
@@ -218,7 +218,7 @@ export default function SwarmTester() {
 	};
 
     ws.onopen = () => {
-      addLog(`Uplink Mapped: Actor instance generated for ${nodeId}`, 'success');
+      addLog(`Authenticated Kafka uplink established for ${nodeId}`, 'success');
       openSockets.current.push(ws);
       
       const timer = setInterval(() => {
@@ -256,7 +256,7 @@ export default function SwarmTester() {
   };
 
   const launchSwarm = (count: number) => {
-    addLog(`Deploying ${count} hardware simulation loops to bounded actor mailboxes...`, 'info');
+    addLog(`Deploying ${count} hardware simulation loops to durable Kafka ingress...`, 'info');
     for (let i = 1; i <= count; i++) {
       setTimeout(() => bootDrone(`DRONE-${Math.floor(1000 + Math.random() * 9000)}`), i * 15);
     }
@@ -268,7 +268,7 @@ export default function SwarmTester() {
     openSockets.current.forEach(ws => ws.close());
     activeTimers.current = [];
     openSockets.current = [];
-    setMetrics({ activeConnections: 0, mailboxSaturation: 0, filterDampeningRatio: 0, caSimulationLatencyMs: 0, safetyApprovalRate: 100 });
+    setMetrics({ activeConnections: 0, connectionUtilization: 0, filterDampeningRatio: 0, caSimulationLatencyMs: 0, safetyApprovalRate: 100 });
   };
 
   useEffect(() => {
@@ -283,7 +283,7 @@ export default function SwarmTester() {
     <div className="p-8 h-full flex flex-col gap-6 overflow-y-auto bg-slate-900 text-slate-100">
       <div>
         <h2 className="text-2xl font-bold tracking-tight">🚁 Polaris 4.0 Distributed Control Console</h2>
-        <p className="text-xs text-slate-400 mt-1">Monitors actor event streams, feedback stabilization gates, and fluid cellular safety limits</p>
+        <p className="text-xs text-slate-400 mt-1">Monitors authenticated uplinks, durable telemetry ingress, and simulation safety limits</p>
       </div>
 
       {/* Real-time Diagnostics HUD Grid */}
@@ -293,8 +293,8 @@ export default function SwarmTester() {
           <div className="text-3xl font-extrabold text-blue-500 mt-1">{metrics.activeConnections}</div>
         </div>
         <div className="bg-slate-800/80 p-5 rounded-xl border border-slate-700/50 shadow-md">
-          <div className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Mailbox Saturation</div>
-          <div className="text-3xl font-extrabold text-violet-400 mt-1">{metrics.mailboxSaturation}%</div>
+          <div className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Connection Utilization</div>
+          <div className="text-3xl font-extrabold text-violet-400 mt-1">{metrics.connectionUtilization}%</div>
         </div>
         <div className="bg-slate-800/80 p-5 rounded-xl border border-slate-700/50 shadow-md">
           <div className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Hysteresis Dampening</div>

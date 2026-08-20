@@ -6,6 +6,7 @@ import (
 )
 
 type Status string
+type PlanningMode string
 
 const (
 	Pending    Status = "PENDING"
@@ -18,13 +19,19 @@ const (
 	Expired    Status = "EXPIRED"
 )
 
+const (
+	PlanningDeviceLocal     PlanningMode = "DEVICE_LOCAL"
+	PlanningPolarisRequired PlanningMode = "POLARIS_REQUIRED"
+)
+
 type Requirements struct {
-	RequiredCapabilities []string `json:"required_capabilities,omitempty"`
-	MinimumBattery       int32    `json:"minimum_battery,omitempty"`
-	AllowedDeviceTypes   []string `json:"allowed_device_types,omitempty"`
-	MaximumDistanceM     float64  `json:"max_distance_meters,omitempty"`
-	ProjectID            string   `json:"project_id,omitempty"`
-	Custom               any      `json:"custom_constraints,omitempty"`
+	RequiredCapabilities []string     `json:"required_capabilities,omitempty"`
+	MinimumBattery       int32        `json:"minimum_battery,omitempty"`
+	AllowedDeviceTypes   []string     `json:"allowed_device_types,omitempty"`
+	MaximumDistanceM     float64      `json:"max_distance_meters,omitempty"`
+	ProjectID            string       `json:"project_id,omitempty"`
+	PlanningMode         PlanningMode `json:"planning_mode,omitempty"`
+	Custom               any          `json:"custom_constraints,omitempty"`
 }
 
 type Target struct {

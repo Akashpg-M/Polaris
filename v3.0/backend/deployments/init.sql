@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS device_capabilities (
   configuration JSONB NOT NULL DEFAULT '{}', enabled BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY(tenant_id,device_id,capability_id), FOREIGN KEY(tenant_id,device_id) REFERENCES devices(tenant_id,device_id)
 );
+CREATE INDEX IF NOT EXISTS idx_device_capabilities_tenant_capability_device ON device_capabilities(tenant_id,capability_id,device_id) WHERE enabled;
 CREATE TABLE IF NOT EXISTS device_credentials (
   credential_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, device_id TEXT NOT NULL, token_prefix TEXT NOT NULL UNIQUE,
   token_hash BYTEA NOT NULL, status TEXT NOT NULL CHECK(status IN ('ACTIVE','REVOKED','EXPIRED')),
@@ -146,11 +147,15 @@ INSERT INTO device_types(device_type_id,display_name,category,description) VALUE
  ('delivery_drone','Delivery drone','MOBILE','Spatial delivery aircraft'),
  ('ground_robot','Ground robot','MOBILE','Autonomous ground robot'),
  ('connected_vehicle','Connected vehicle','MOBILE','Connected road vehicle'),
- ('fixed_iot_sensor','Fixed IoT sensor','STATIC','Fixed telemetry sensor') ON CONFLICT DO NOTHING;
+ ('fixed_iot_sensor','Fixed IoT sensor','STATIC','Fixed telemetry sensor'),
+ ('static_camera','Static camera','STATIC','Fixed spatial camera'),
+ ('compute_node','Compute node','COMPUTE','Non-spatial edge compute node') ON CONFLICT DO NOTHING;
 INSERT INTO capabilities(capability_id,display_name,description) VALUES
  ('navigate','Navigate','Autonomous navigation'),
  ('receive_relocation_command','Receive relocation command','Accept relocation directives'),
  ('capture_image','Capture image','Capture still imagery'),
+ ('carry_payload','Carry payload','Carry a physical payload'),
+ ('run_model','Run model','Execute an edge inference model'),
  ('measure_temperature','Measure temperature','Report ambient temperature') ON CONFLICT DO NOTHING;
 
 -- Phase 3: durable task, assignment and command orchestration.

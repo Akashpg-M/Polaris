@@ -1,0 +1,55 @@
+﻿{
+  "baseline_status": 200,
+  "flood_requests": 80,
+  "generic_command_completed": true,
+  "generic_task_status": 201,
+  "post_overload_route_status": 200,
+  "ready": {
+    "core": "READY",
+    "modules": {
+      "mobility": {
+        "state": "READY",
+        "message": "spatial and configured routing components started",
+        "components": {
+          "routing": {
+            "state": "READY"
+          },
+          "spatial": {
+            "state": "READY"
+          }
+        },
+        "details": {
+          "road_edges": 1442876,
+          "road_graph_version": "chennai-v1",
+          "road_nodes": 690268,
+          "routing_runtime": {
+            "requests": 82,
+            "routing_busy": 75,
+            "queue_depth": 0,
+            "queue_capacity": 4,
+            "active_tenants": 0
+          },
+          "routing_snapshot_version": 2,
+          "traffic_edge_states": 1,
+          "traffic_overlay_bytes": 11543008,
+          "traffic_refresh_interval": "15s",
+          "traffic_scope": "SHARED_TRUSTED"
+        }
+      }
+    },
+    "runtime": {
+      "db_idle": 10,
+      "db_in_use": 0,
+      "db_open_connections": 10,
+      "db_wait_count": 137,
+      "goroutines": 66
+    },
+    "status": "ready"
+  },
+  "ready_status": 200,
+  "routing_busy": 75,
+  "routing_success": 4,
+  "routing_timeout": 1,
+  "telemetry_sent_during_overload": 40,
+  "unexpected": 0
+}

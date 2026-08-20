@@ -1,11 +1,13 @@
 package orchestrator
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"log/slog"
-	"github.com/jmoiron/sqlx"
+	"time"
+
 	pb "github.com/Akashpg-M/polaris/backend/api/proto/v1"
+	"github.com/jmoiron/sqlx"
 )
 
 // PredictiveZoneStrategy uses historical spatial clustering to predict demand
@@ -18,15 +20,21 @@ func NewPredictiveZoneStrategy(postgresURL string) (*PredictiveZoneStrategy, err
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	return &PredictiveZoneStrategy{db: db}, nil
 }
 
+func (s *PredictiveZoneStrategy) Close() error { return s.db.Close() }
+
 func (s *PredictiveZoneStrategy) GetTargetZones(ctx context.Context) []Zone {
-	// ML Clustering via SQL: 
+	// ML Clustering via SQL:
 	// We divide the map into a grid by rounding Lat/Lon to 2 decimal places (~1.1km accuracy).
 	// We count how many pings happened in each grid over the last hour.
 	// The top grids become our "Predicted Hotspots".
-	
+
 	query := `
 		SELECT 
 			ROUND(lat::numeric, 2) AS cluster_lat,

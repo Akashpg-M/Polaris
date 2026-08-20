@@ -2,5 +2,7 @@
 .tmp
 .gocache
 .gotmp
+.phase4-cache-*
+.phase*-go-cache
 **/*_test.go
 deployments

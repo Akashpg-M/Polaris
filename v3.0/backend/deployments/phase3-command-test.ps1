@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 $deploymentDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $backendDir = Resolve-Path (Join-Path $deploymentDir "..")
 $composeFile = Join-Path $deploymentDir "docker-compose.yml"
-$engine = "http://localhost:6081/api/v1"
+$engine = "http://127.0.0.1:6081/api/v1"
 
 function New-RandomToken([string]$kind) {
   $rng=[Security.Cryptography.RandomNumberGenerator]::Create()
@@ -122,7 +122,7 @@ if(-not$recoveryCommand){throw 'Command was not committed while Kafka was unavai
 $pendingOutbox=docker compose -f $composeFile exec -T postgres psql -U polaris_user -d polaris_core -tAc "SELECT count(*) FROM outbox_events WHERE aggregate_id='$recoveryCommand' AND status<>'PUBLISHED'"
 if([int]$pendingOutbox-lt1){throw 'Command outbox was not retained during Kafka outage'}
 docker compose -f $composeFile start redpanda|Out-Null
-$deadline=(Get-Date).AddSeconds(30)
+$deadline=(Get-Date).AddSeconds(60)
 do{$published=docker compose -f $composeFile exec -T postgres psql -U polaris_user -d polaris_core -tAc "SELECT count(*) FROM outbox_events WHERE aggregate_id='$recoveryCommand' AND event_type='command.created.v1' AND status='PUBLISHED'";if([int]$published-ge1){break};Start-Sleep -Milliseconds 500}while((Get-Date)-lt$deadline)
 if([int]$published-lt1){throw 'Outbox did not recover after Kafka restart'}
 

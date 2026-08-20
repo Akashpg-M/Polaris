@@ -30,12 +30,12 @@ export default function SwarmTester() {
 	  const operatorToken = localStorage.getItem('polaris_operator_token');
 	  if (!operatorToken) return;
 	  const authHeaders = { Authorization: `Bearer ${operatorToken}`, 'X-Tenant-ID': 'alpha_logistics' };
-      // 1. Benchmark QuadTree Spatial Index Latency
+      // 1. Sample the Mobility H3/R-tree query latency indicator.
       const t0 = performance.now();
       await fetch('http://localhost:6081/api/v1/nodes/match?lat=13.0067&lon=80.2206&radius_km=5.0', { headers: authHeaders });
       const spatialDiff = performance.now() - t0;
 
-      // 2. Benchmark Dijkstra Pathfinding Latency
+      // 2. Sample the Mobility routing latency indicator.
       const t1 = performance.now();
       const routeRes = await fetch('http://localhost:6081/api/v1/routes/calculate?src_lat=13.0067&src_lon=80.2206&tgt_lat=13.0012&tgt_lon=80.2565', { headers: authHeaders });
       const routeJson = await routeRes.json();
@@ -146,11 +146,11 @@ export default function SwarmTester() {
           <div className="text-4xl font-extrabold text-blue-500 mt-2">{metrics.activeConnections}</div>
         </div>
         <div className="bg-slate-800 p-5 rounded-xl border border-slate-700/60 shadow-md">
-          <div className="text-slate-400 text-xs uppercase tracking-widest font-semibold">QuadTree Matcher Latency</div>
+          <div className="text-slate-400 text-xs uppercase tracking-widest font-semibold">Mobility Spatial Latency</div>
           <div className="text-4xl font-extrabold text-cyan-400 mt-2">{metrics.spatialMatcherLatencyMs} <span className="text-sm font-medium text-slate-500">ms</span></div>
         </div>
         <div className="bg-slate-800 p-5 rounded-xl border border-slate-700/60 shadow-md">
-          <div className="text-slate-400 text-xs uppercase tracking-widest font-semibold">Dijkstra Router Compute</div>
+          <div className="text-slate-400 text-xs uppercase tracking-widest font-semibold">A* Router Compute</div>
           <div className="text-4xl font-extrabold text-teal-400 mt-2">
             {metrics.routerExecutionLatencyMs > 0 ? `${metrics.routerExecutionLatencyMs} ms` : <span className="text-sm text-red-400 font-semibold">Network Offline</span>}
           </div>

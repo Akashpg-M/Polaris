@@ -52,7 +52,7 @@ type KafkaConsumer struct {
 	lastProgress  atomic.Int64
 }
 
-func NewKafkaConsumer(brokerURL string, engine *spatial.Engine, redisClient *redis.Client) *KafkaConsumer {
+func NewKafkaConsumer(brokerURL string, engine stateApplier, redisClient *redis.Client) *KafkaConsumer {
 	c := &KafkaConsumer{
 		reader:    kafka.NewReader(kafka.ReaderConfig{Brokers: []string{brokerURL}, Topic: KafkaTelemetryTopic, GroupID: "polaris_engine_group", CommitInterval: 0}),
 		dlq:       &kafka.Writer{Addr: kafka.TCP(brokerURL), Topic: DeadLetterTopic, Balancer: &kafka.Hash{}},
@@ -95,7 +95,9 @@ func (c *KafkaConsumer) process(ctx context.Context, item pendingTelemetry) bool
 			if redisClass == spatial.Accepted || redisClass == spatial.NewBoot || redisClass == spatial.Duplicate {
 				memoryClass = c.engine.ApplyEnvelope(envelope)
 			}
-			slog.Info("telemetry state classified", "event_id", envelope.EventID, "spatial", memoryClass, "redis", redisClass)
+			// Per-event classification is useful for diagnosis but is too noisy for
+			// the steady-state INFO path under fleet load.
+			slog.Debug("telemetry state classified", "event_id", envelope.EventID, "spatial", memoryClass, "redis", redisClass)
 			return true
 		}
 		lastErr = projectionErr

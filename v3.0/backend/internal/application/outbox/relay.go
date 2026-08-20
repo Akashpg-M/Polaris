@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Akashpg-M/polaris/backend/internal/adapter/repository"
+	"github.com/Akashpg-M/polaris/backend/internal/core/command"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -55,15 +56,35 @@ func (r *Relay) flush(ctx context.Context) {
 		slog.Error("outbox claim failed", "error", err)
 		return
 	}
+	if len(events) == 0 {
+		return
+	}
+	messages := make([]kafka.Message, 0, len(events))
+	ids := make([]string, 0, len(events))
 	for _, e := range events {
 		topic, key, value := route(e)
-		if err = r.writer.WriteMessages(ctx, kafka.Message{Topic: topic, Key: []byte(key), Value: value}); err != nil {
+		if topic == CommandTopic {
+			var envelope command.Envelope
+			if json.Unmarshal(value, &envelope) == nil {
+				envelope.DeliveryObservation = &command.DeliveryObservation{RelayPublishedAt: time.Now().UTC()}
+				if observed, marshalErr := json.Marshal(envelope); marshalErr == nil {
+					value = observed
+				}
+			}
+		}
+		messages = append(messages, kafka.Message{Topic: topic, Key: []byte(key), Value: value})
+		ids = append(ids, e.OutboxID)
+	}
+	if err = r.writer.WriteMessages(ctx, messages...); err != nil {
+		// Kafka may have accepted a subset. Replay the complete batch: every
+		// downstream consumer is idempotent and this preserves at-least-once.
+		for _, e := range events {
 			_ = r.store.MarkOutboxFailed(ctx, e.OutboxID, err.Error())
-			continue
 		}
-		if err = r.store.MarkOutboxPublished(ctx, e.OutboxID); err != nil {
-			slog.Error("outbox publish marker failed; event will replay", "event_id", e.EventID, "error", err)
-		}
+		return
+	}
+	if err = r.store.MarkOutboxPublishedBatch(ctx, ids); err != nil {
+		slog.Error("outbox batch publish marker failed; events will replay", "events", len(ids), "error", err)
 	}
 }
 

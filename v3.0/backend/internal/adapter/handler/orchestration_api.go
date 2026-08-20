@@ -10,7 +10,9 @@ import (
 	"github.com/Akashpg-M/polaris/backend/internal/adapter/repository"
 	"github.com/Akashpg-M/polaris/backend/internal/application/orchestration"
 	"github.com/Akashpg-M/polaris/backend/internal/core/command"
+	"github.com/Akashpg-M/polaris/backend/internal/core/extension"
 	taskcore "github.com/Akashpg-M/polaris/backend/internal/core/task"
+	"github.com/Akashpg-M/polaris/backend/internal/modules/mobility/routing"
 	"github.com/gin-gonic/gin"
 )
 
@@ -43,6 +45,16 @@ func orchestrationError(c *gin.Context, err error) {
 		apiError(c, http.StatusBadRequest, "INVALID_TASK", err.Error())
 	case errors.Is(err, orchestration.ErrNoEligibleDevice):
 		apiError(c, http.StatusConflict, "NO_ELIGIBLE_DEVICE", err.Error())
+	case errors.Is(err, routing.ErrBusy):
+		apiError(c, http.StatusTooManyRequests, "ROUTING_BUSY", err.Error())
+	case errors.Is(err, routing.ErrTimeout):
+		apiError(c, http.StatusGatewayTimeout, "ROUTING_TIMEOUT", err.Error())
+	case errors.Is(err, routing.ErrUnavailable):
+		apiError(c, http.StatusServiceUnavailable, "ROUTING_UNAVAILABLE", err.Error())
+	case errors.Is(err, routing.ErrNoRoute), errors.Is(err, routing.ErrNoRoadNode), errors.Is(err, routing.ErrUnsupportedProfile), errors.Is(err, routing.ErrOutsideRegion):
+		apiError(c, http.StatusUnprocessableEntity, err.Error(), err.Error())
+	case errors.Is(err, extension.ErrPlanningRequired):
+		apiError(c, http.StatusUnprocessableEntity, "PLANNER_UNAVAILABLE", err.Error())
 	case errors.Is(err, repository.ErrNotFound):
 		apiError(c, http.StatusNotFound, "NOT_FOUND", "Resource was not found")
 	case errors.Is(err, repository.ErrForbidden):

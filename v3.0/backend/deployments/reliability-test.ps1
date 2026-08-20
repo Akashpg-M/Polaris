@@ -9,16 +9,16 @@ Push-Location $backendDir
 try {
   go test ./...
   if ($LASTEXITCODE -ne 0) { throw "Unit reliability tests failed" }
-  $env:REDIS_URL = "redis://localhost:6379/0"
-  $env:POSTGRES_URL = "postgres://polaris_user:polaris_password@localhost:5432/polaris_core?sslmode=disable"
+  $env:REDIS_URL = "redis://127.0.0.1:6379/0"
+  $env:POSTGRES_URL = "postgres://polaris_user:polaris_password@127.0.0.1:5432/polaris_core?sslmode=disable"
   go test -count=1 -tags=integration -v ./internal/application/stream
   if ($LASTEXITCODE -ne 0) { throw "Live dependency reliability tests failed" }
 } finally { Pop-Location }
 
-$gatewayHealth = Invoke-RestMethod http://localhost:6080/healthz
-$gatewayReady = Invoke-RestMethod http://localhost:6080/readyz
-$engineHealth = Invoke-RestMethod http://localhost:6081/healthz
-$engineReady = Invoke-RestMethod http://localhost:6081/readyz
+$gatewayHealth = Invoke-RestMethod http://127.0.0.1:6080/healthz
+$gatewayReady = Invoke-RestMethod http://127.0.0.1:6080/readyz
+$engineHealth = Invoke-RestMethod http://127.0.0.1:6081/healthz
+$engineReady = Invoke-RestMethod http://127.0.0.1:6081/readyz
 if ($gatewayHealth.status -ne "live" -or $gatewayReady.status -ne "ready" -or $engineHealth.status -ne "live" -or $engineReady.status -ne "ready") {
   throw "Health/readiness contract failed"
 }

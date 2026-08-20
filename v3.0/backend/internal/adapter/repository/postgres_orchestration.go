@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Akashpg-M/polaris/backend/internal/core/auth"
 	"github.com/Akashpg-M/polaris/backend/internal/core/command"
+	"github.com/Akashpg-M/polaris/backend/internal/core/extension"
 	taskcore "github.com/Akashpg-M/polaris/backend/internal/core/task"
 	"github.com/lib/pq"
 )
@@ -97,7 +99,7 @@ func (s *RegistryStore) EligibleDevices(ctx context.Context, tenant string, requ
 	return result, s.DB.SelectContext(ctx, &result, q, args...)
 }
 
-func (s *RegistryStore) AssignTask(ctx context.Context, v taskcore.Task, deviceID, actor, requestID string, maxAttempts int) (command.Record, error) {
+func (s *RegistryStore) AssignTaskWithPlan(ctx context.Context, v taskcore.Task, deviceID, actor, requestID string, maxAttempts int, plan extension.ExecutionPlan) (command.Record, error) {
 	if maxAttempts < 1 {
 		maxAttempts = 5
 	}
@@ -116,6 +118,16 @@ func (s *RegistryStore) AssignTask(ctx context.Context, v taskcore.Task, deviceI
 	if current != string(taskcore.Pending) {
 		return command.Record{}, ErrInvalidTransition
 	}
+	if plan.CommandType == "" || len(plan.Payload) == 0 || !json.Valid(plan.Payload) {
+		return command.Record{}, ErrInvalidTransition
+	}
+	commandExpiry := v.ExpiresAt
+	if plan.ValidUntil != nil && plan.ValidUntil.Before(commandExpiry) {
+		commandExpiry = *plan.ValidUntil
+	}
+	if !commandExpiry.After(time.Now()) {
+		return command.Record{}, ErrInvalidTransition
+	}
 	assignmentID := auth.NewID()
 	_, err = tx.ExecContext(ctx, `INSERT INTO device_assignments(assignment_id,tenant_id,device_id,task_id,status,lease_expires_at) VALUES($1,$2,$3,$4,'ACTIVE',$5)`, assignmentID, v.TenantID, deviceID, v.TaskID, v.ExpiresAt)
 	if err != nil {
@@ -127,7 +139,7 @@ func (s *RegistryStore) AssignTask(ctx context.Context, v taskcore.Task, deviceI
 		return command.Record{}, err
 	}
 	now := time.Now().UTC()
-	record := command.Record{CommandID: auth.NewID(), TenantID: v.TenantID, DeviceID: deviceID, TaskID: v.TaskID, CommandType: v.TaskType, Payload: v.Target, Status: string(command.Pending), SequenceNumber: sequence, CorrelationID: v.CorrelationID, CausationID: v.TaskID, AttemptCount: 0, MaxAttempts: maxAttempts, Version: 1, CreatedAt: now, AvailableAt: now, ExpiresAt: v.ExpiresAt}
+	record := command.Record{CommandID: auth.NewID(), TenantID: v.TenantID, DeviceID: deviceID, TaskID: v.TaskID, CommandType: plan.CommandType, Payload: plan.Payload, Status: string(command.Pending), SequenceNumber: sequence, CorrelationID: v.CorrelationID, CausationID: v.TaskID, AttemptCount: 0, MaxAttempts: maxAttempts, Version: 1, CreatedAt: now, AvailableAt: now, ExpiresAt: commandExpiry}
 	_, err = tx.ExecContext(ctx, `INSERT INTO commands(command_id,tenant_id,device_id,task_id,command_type,payload,status,sequence_number,correlation_id,causation_id,max_attempts,created_at,available_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,'PENDING',$7,$8,$9,$10,$11,$11,$12)`, record.CommandID, record.TenantID, record.DeviceID, record.TaskID, record.CommandType, record.Payload, record.SequenceNumber, record.CorrelationID, record.CausationID, record.MaxAttempts, now, record.ExpiresAt)
 	if err != nil {
 		return command.Record{}, err

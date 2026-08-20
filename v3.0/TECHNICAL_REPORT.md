@@ -1,5 +1,7 @@
 # Polaris v3.0 — Full Codebase Technical Assessment
 
+> Historical baseline (18 August 2026). The pipeline and architectural defects described here were the input to Phases 0-4.1 and are no longer the current implementation state. See `CODEBASE_CONSISTENCY_REPORT.md` and `PHASE_4_1_CONSISTENCY_EVIDENCE.md` for the post-rectification assessment and verified results.
+
 **Assessment date:** 18 August 2026  
 **Repository assessed:** `Polaris/v3.0`  
 **Scope:** Go backend, React frontend, data contracts, infrastructure configuration, tests, runtime wiring, and maintainability risks.

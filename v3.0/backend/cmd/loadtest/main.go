@@ -39,7 +39,7 @@ type Payload struct {
 func main() {
 	// 1. Configurable Flags
 	targetNodes := flag.Int("nodes", 1000, "Number of concurrent drones to simulate")
-	serverURL := flag.String("url", "ws://localhost:6080/ws/telemetry", "Gateway WebSocket URL")
+	serverURL := flag.String("url", "ws://127.0.0.1:6080/ws/telemetry", "Gateway WebSocket URL")
 	rampRate := flag.Int("ramp", 100, "How many new connections to open per second")
 	flag.Parse()
 
