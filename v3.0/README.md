@@ -120,14 +120,18 @@ Redis Pub/Sub is never a durable command or lifecycle source. The autonomous reb
 Requirements: Docker Desktop with Compose v2.
 
 ```powershell
-docker compose -f backend/deployments/docker-compose.yml up -d --build --wait
+.\backend\deployments\start.ps1
 ```
 
-Services expose gateway `6080`, engine `6081`, frontend `5173`, Redpanda `9092`, Redis `6379`, and PostgreSQL `5432`. `/healthz` is liveness; `/readyz` probes dependencies required for assigned work. Compose waits on readiness plus one-shot Kafka initialization and database migration jobs. Check status with:
+The script generates an ignored deployment `.env` with secure random local credentials, validates Compose, builds the images, and waits for readiness. The public dashboard is exposed on `5173`; direct gateway `6080`, engine `6081`, Redpanda `9092`, Redis `6379`, and PostgreSQL `5432` ports bind to loopback by default. Browser API and WebSocket traffic is routed through the frontend so deployments do not contain baked-in `localhost` endpoints.
+
+`/healthz` is liveness; `/readyz` probes dependencies required for assigned work. Compose waits on readiness plus one-shot Kafka initialization and database migration jobs. Check status with:
 
 ```powershell
-docker compose -f backend/deployments/docker-compose.yml ps
+.\backend\deployments\status.ps1
 ```
+
+Use `logs.ps1`, `stop.ps1`, and `verify-deployment.ps1` for normal operation and deployment validation. The complete configuration, secret, start/stop, verification, update, and backup procedures are in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## End-to-end smoke test
 

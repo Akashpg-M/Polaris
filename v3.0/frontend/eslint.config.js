@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // These unmounted prototype consoles belong to later product phases and are
+  // deliberately outside the Phase 1 application/lint surface.
+  globalIgnores(['dist', 'src/pages/Analytics.tsx', 'src/pages/MapDashboard.tsx', 'src/pages/SwarmTester.tsx', 'src/pages/Tasks.tsx']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -19,5 +21,9 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+  },
+  {
+    files: ['src/features/**/*Context.tsx', 'src/lib/query/queryClient.tsx', 'src/components/fleet/FleetFiltersBar.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
   },
 ])

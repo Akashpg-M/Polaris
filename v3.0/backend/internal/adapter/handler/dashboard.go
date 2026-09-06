@@ -76,6 +76,7 @@ type DashboardHandler struct {
 	upgrader      websocket.Upgrader
 	authenticator DashboardAuthenticator
 }
+
 type DashboardAuthenticator interface {
 	ResolveOperator(context.Context, string) (auth.OperatorPrincipal, error)
 	ConsumeOperatorTicket(context.Context, string) (auth.OperatorPrincipal, error)
@@ -134,6 +135,7 @@ func (h *DashboardHandler) HandleWebConnection(c *gin.Context) {
 		}
 	}()
 }
+
 func (h *DashboardHandler) authenticate(c *gin.Context) (auth.OperatorPrincipal, error) {
 	if ticket := c.Query("ticket"); ticket != "" {
 		return h.authenticator.ConsumeOperatorTicket(c.Request.Context(), ticket)

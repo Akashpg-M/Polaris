@@ -110,6 +110,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { serializeProtobufTelemetry } from '../types/polaris';
 import type { LogEntry } from '../types/polaris';
+import { engineApi, gatewayApi, gatewayWs } from '../config';
 
 interface Polaris4Metrics {
   activeConnections: number;
@@ -140,7 +141,7 @@ export default function SwarmTester() {
   const runLiveDiagnostics = async () => {
     try {
       // 1. Fetch Ingress Atomic Connection Counter from Gateway
-      const res = await fetch('http://localhost:6080/api/v1/metrics/connections');
+      const res = await fetch(`${gatewayApi}/metrics/connections`);
       const json = await res.json();
       const currentUplinks = json.active_uplinks || 0;
 
@@ -162,15 +163,15 @@ export default function SwarmTester() {
     const operatorToken = localStorage.getItem('polaris_operator_token');
     if (!operatorToken) { addLog('Set polaris_operator_token in localStorage before launching authenticated devices', 'danger'); return; }
     const headers = { Authorization: `Bearer ${operatorToken}`, 'X-Tenant-ID': 'alpha_logistics', 'Content-Type': 'application/json' };
-    const create = await fetch('http://localhost:6081/api/v1/devices', { method:'POST', headers, body:JSON.stringify({device_id:nodeId,device_type_id:'delivery_drone',display_name:nodeId}) });
+    const create = await fetch(`${engineApi}/devices`, { method:'POST', headers, body:JSON.stringify({device_id:nodeId,device_type_id:'delivery_drone',display_name:nodeId}) });
     if (!create.ok && create.status !== 409) { addLog(`Registry rejected ${nodeId}`, 'danger'); return; }
-    await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/activate`, { method:'POST', headers });
-    const credential = await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/credentials`, { method:'POST', headers, body:'{}' });
+    await fetch(`${engineApi}/devices/${nodeId}/activate`, { method:'POST', headers });
+    const credential = await fetch(`${engineApi}/devices/${nodeId}/credentials`, { method:'POST', headers, body:'{}' });
     if (!credential.ok) { addLog(`Credential issue failed for ${nodeId}`, 'danger'); return; }
-    const ticketResponse = await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/connection-ticket`, { method:'POST', headers, body:'{}' });
+    const ticketResponse = await fetch(`${engineApi}/devices/${nodeId}/connection-ticket`, { method:'POST', headers, body:'{}' });
     if (!ticketResponse.ok) { addLog(`Ticket issue failed for ${nodeId}`, 'danger'); return; }
     const ticket = (await ticketResponse.json()).data.ticket;
-    const ws = new WebSocket(`ws://localhost:6080/ws/telemetry?ticket=${encodeURIComponent(ticket)}`);
+    const ws = new WebSocket(`${gatewayWs}/ws/telemetry?ticket=${encodeURIComponent(ticket)}`);
     ws.binaryType = "arraybuffer";
     
     let lat = 13.0067 + (Math.random() * 0.02 - 0.01);

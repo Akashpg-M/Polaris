@@ -1,73 +1,81 @@
-# React + TypeScript + Vite
+# Polaris Control Plane Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The Polaris frontend is a tenant-scoped operational control plane. Phase 1 exposes the registered fleet and digital twins. Phase 2 adds durable task and immutable command orchestration. Phase 3 adds canonical spatial discovery, bounded traffic-aware road routing, and truthful Mobility diagnostics without crossing into registry mutation, credential management, audit administration, or simulator tooling.
 
-Currently, two official plugins are available:
+## Product surfaces
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Operator access using an out-of-band bearer token and known tenant ID
+- Responsive application shell with persistent theme, sidebar, tenant, and project context
+- Bounded fleet overview with lifecycle/connectivity/type summaries
+- Cursor-based device inventory with project, type, lifecycle, connectivity, and loaded-page search filters
+- Device detail with registry metadata, current state, twin components, capabilities, and an explicitly current-only telemetry view
+- Read-only project list and project fleet detail
+- Digital-twin cards that distinguish registry lifecycle from online/stale/offline/never-connected state
+- API-hydrated Leaflet fleet map with lightweight grid clustering and a device detail drawer
+- Tenant-bound dashboard WebSocket updates with single-use tickets, safe parsing, cache patching, exponential reconnect, and authoritative refresh after reconnect
+- Role-aware task list, task creation wizard, task detail, cancellation, and administrative orchestration retry
+- Command list/detail with per-device ordering, immutable payload and route-plan inspection, ACK/result state, conservative cancellation, and administrative delivery retry
+- Confirmed-timestamp task/command timelines, request correlation metadata, and bounded current Operations activity
+- Controlled REST polling for active orchestration because the telemetry dashboard socket does not carry task/command lifecycle events
+- Mobility Overview, canonical Nearby Search, shortest/fastest Route Explorer, Traffic metadata, Routing Diagnostics, and explicitly experimental density analytics
+- Shared Leaflet primitives across Live Map and Mobility, plus immutable command-route inspection without recalculation
 
-## React Compiler
+The UI never treats browser role selection as an authorization boundary. The backend still authenticates and authorizes every request. The role field is temporary presentation context because the current backend does not expose session introspection.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Run the complete application
 
-## Expanding the ESLint configuration
+From the repository root with Docker Desktop running:
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```powershell
+.\backend\deployments\start.ps1
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Open `http://localhost:5173`. Use the `DEV_PLATFORM_ADMIN_TOKEN` generated in `backend/deployments/.env`, select `PLATFORM_ADMIN`, and enter a known tenant ID. A fresh database has no tenant fleet; the full smoke test creates an `alpha_logistics` demo tenant and device:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```powershell
+.\backend\deployments\smoke-test.ps1
 ```
+
+Normal deployment operations:
+
+```powershell
+.\backend\deployments\status.ps1
+.\backend\deployments\logs.ps1
+.\backend\deployments\verify-deployment.ps1
+.\backend\deployments\stop.ps1
+```
+
+Nginx serves the single-page app and routes `/api/engine/*`, `/api/gateway/*`, and `/ws/*` to internal Compose services. No container image contains a baked-in host `localhost` API address.
+
+## Frontend development
+
+Requirements: Node.js 22 and npm.
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+The Vite development proxy expects Gateway on `127.0.0.1:6080` and Engine on `127.0.0.1:6081`.
+
+Run the quality gates with:
+
+```powershell
+npm run lint
+npm test
+npm run build
+```
+
+## Contract and scope documentation
+
+- [`../docs/frontend/frontend_contract_inventory.md`](../docs/frontend/frontend_contract_inventory.md)
+- [`../docs/frontend/phase1_backend_gaps.md`](../docs/frontend/phase1_backend_gaps.md)
+- [`../docs/frontend/phase1_implementation_plan.md`](../docs/frontend/phase1_implementation_plan.md)
+- [`../docs/frontend/phase1_closure_report.md`](../docs/frontend/phase1_closure_report.md)
+- [`../docs/frontend/phase2_implementation_plan.md`](../docs/frontend/phase2_implementation_plan.md)
+- [`../docs/frontend/phase2_backend_gaps.md`](../docs/frontend/phase2_backend_gaps.md)
+- [`../docs/frontend/phase2_closure_report.md`](../docs/frontend/phase2_closure_report.md)
+- [`../docs/frontend/phase3_implementation_plan.md`](../docs/frontend/phase3_implementation_plan.md)
+- [`../docs/frontend/phase3_backend_gaps.md`](../docs/frontend/phase3_backend_gaps.md)
+- [`../docs/frontend/phase3_closure_report.md`](../docs/frontend/phase3_closure_report.md)

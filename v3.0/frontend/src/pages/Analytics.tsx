@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { serializeProtobufTelemetry } from '../types/polaris';
 import type { LogEntry } from '../types/polaris';
+import { engineApi, gatewayWs } from '../config';
 
 interface DiagnosticMetrics {
   activeConnections: number;
@@ -32,12 +33,12 @@ export default function SwarmTester() {
 	  const authHeaders = { Authorization: `Bearer ${operatorToken}`, 'X-Tenant-ID': 'alpha_logistics' };
       // 1. Sample the Mobility H3/R-tree query latency indicator.
       const t0 = performance.now();
-      await fetch('http://localhost:6081/api/v1/nodes/match?lat=13.0067&lon=80.2206&radius_km=5.0', { headers: authHeaders });
+      await fetch(`${engineApi}/nodes/match?lat=13.0067&lon=80.2206&radius_km=5.0`, { headers: authHeaders });
       const spatialDiff = performance.now() - t0;
 
       // 2. Sample the Mobility routing latency indicator.
       const t1 = performance.now();
-      const routeRes = await fetch('http://localhost:6081/api/v1/routes/calculate?src_lat=13.0067&src_lon=80.2206&tgt_lat=13.0012&tgt_lon=80.2565', { headers: authHeaders });
+      const routeRes = await fetch(`${engineApi}/routes/calculate?src_lat=13.0067&src_lon=80.2206&tgt_lat=13.0012&tgt_lon=80.2565`, { headers: authHeaders });
       const routeJson = await routeRes.json();
       const routeDiff = performance.now() - t1;
 
@@ -54,10 +55,10 @@ export default function SwarmTester() {
   const bootDrone = async (nodeId: string) => {
 	const operatorToken=localStorage.getItem('polaris_operator_token');if(!operatorToken){addLog('Missing polaris_operator_token','danger');return;}
 	const headers={Authorization:`Bearer ${operatorToken}`,'X-Tenant-ID':'alpha_logistics','Content-Type':'application/json'};
-	const created=await fetch('http://localhost:6081/api/v1/devices',{method:'POST',headers,body:JSON.stringify({device_id:nodeId,device_type_id:'delivery_drone',display_name:nodeId})});if(!created.ok&&created.status!==409)return;
-	await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/activate`,{method:'POST',headers});await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/credentials`,{method:'POST',headers,body:'{}'});
-	const ticketResult=await fetch(`http://localhost:6081/api/v1/devices/${nodeId}/connection-ticket`,{method:'POST',headers,body:'{}'});if(!ticketResult.ok)return;const ticket=(await ticketResult.json()).data.ticket;
-    const ws = new WebSocket(`ws://localhost:6080/ws/telemetry?ticket=${encodeURIComponent(ticket)}`);
+	const created=await fetch(`${engineApi}/devices`,{method:'POST',headers,body:JSON.stringify({device_id:nodeId,device_type_id:'delivery_drone',display_name:nodeId})});if(!created.ok&&created.status!==409)return;
+	await fetch(`${engineApi}/devices/${nodeId}/activate`,{method:'POST',headers});await fetch(`${engineApi}/devices/${nodeId}/credentials`,{method:'POST',headers,body:'{}'});
+	const ticketResult=await fetch(`${engineApi}/devices/${nodeId}/connection-ticket`,{method:'POST',headers,body:'{}'});if(!ticketResult.ok)return;const ticket=(await ticketResult.json()).data.ticket;
+    const ws = new WebSocket(`${gatewayWs}/ws/telemetry?ticket=${encodeURIComponent(ticket)}`);
     ws.binaryType = "arraybuffer";
     
     let lat = 13.0067 + (Math.random() * 0.02 - 0.01);

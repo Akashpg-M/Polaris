@@ -1,8 +1,20 @@
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  networks: [polaris]
+  logging:
+    driver: json-file
+    options:
+      max-size: ${LOG_MAX_SIZE:-20m}
+      max-file: ${LOG_MAX_FILES:-5}
+
 services:
   redpanda:
+    <<: *service-defaults
     image: docker.redpanda.com/redpandadata/redpanda:v24.3.18
     command: ["redpanda", "start", "--smp=1", "--memory=1G", "--reserve-memory=0M", "--overprovisioned", "--node-id=0", "--kafka-addr=PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092", "--advertise-kafka-addr=PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092"]
-    ports: ["9092:9092", "9644:9644"]
+    ports:
+      - "${INFRA_BIND_ADDRESS:-127.0.0.1}:${REDPANDA_KAFKA_PORT:-9092}:9092"
+      - "${INFRA_BIND_ADDRESS:-127.0.0.1}:${REDPANDA_ADMIN_PORT:-9644}:9644"
     volumes:
       - polaris_redpanda_data:/var/lib/redpanda/data
     healthcheck:
@@ -12,9 +24,12 @@ services:
       retries: 20
       start_period: 10s
   redis:
+    <<: *service-defaults
     image: redis:7.4-alpine
-    command: ["redis-server", "--save", ""]
-    ports: ["6379:6379"]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports: ["${INFRA_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"]
+    volumes:
+      - polaris_redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
@@ -22,6 +37,8 @@ services:
       retries: 20
   kafka-init:
     image: docker.redpanda.com/redpandadata/redpanda:v24.3.18
+    restart: "no"
+    networks: [polaris]
     depends_on:
       redpanda: { condition: service_healthy }
     entrypoint: ["/bin/sh", "-ec"]
@@ -39,43 +56,49 @@ services:
         rpk topic create device.command.ack.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
         rpk topic create device.command.result.v1 --partitions 3 --replicas 1 -X brokers=redpanda:29092 || true
   postgres:
+    <<: *service-defaults
     image: postgis/postgis:16-3.4
     environment:
-      POSTGRES_USER: polaris_user
-      POSTGRES_PASSWORD: polaris_password
-      POSTGRES_DB: polaris_core
-    ports: ["5432:5432"]
+      POSTGRES_USER: ${POSTGRES_USER:-polaris_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in backend/deployments/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-polaris_core}
+    ports: ["${INFRA_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"]
     volumes:
       - polaris_pg_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U polaris_user -d polaris_core"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 3s
       timeout: 3s
       retries: 20
   postgres-migrate:
     image: postgis/postgis:16-3.4
+    restart: "no"
+    networks: [polaris]
     environment:
-      PGPASSWORD: polaris_password
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in backend/deployments/.env}
     volumes:
       - ./init.sql:/migrations/init.sql:ro
     depends_on:
       postgres: { condition: service_healthy }
-    command: ["psql", "-h", "postgres", "-U", "polaris_user", "-d", "polaris_core", "-v", "ON_ERROR_STOP=1", "-f", "/migrations/init.sql"]
+    command: ["psql", "-h", "postgres", "-U", "${POSTGRES_USER:-polaris_user}", "-d", "${POSTGRES_DB:-polaris_core}", "-v", "ON_ERROR_STOP=1", "-f", "/migrations/init.sql"]
   gateway:
+    <<: *service-defaults
     build:
       context: ..
       dockerfile: Dockerfile
       args: { SERVICE: gateway }
     environment:
+      APP_ENV: ${APP_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       GATEWAY_PORT: "6080"
       KAFKA_BROKER_URL: redpanda:29092
       REDIS_URL: redis://redis:6379/0
-      POSTGRES_URL: postgres://polaris_user:polaris_password@postgres:5432/polaris_core?sslmode=disable
+      POSTGRES_URL: postgres://${POSTGRES_USER:-polaris_user}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in backend/deployments/.env}@postgres:5432/${POSTGRES_DB:-polaris_core}?sslmode=disable
       GATEWAY_ID: ${GATEWAY_ID:-gateway-1}
       CONNECTION_LEASE_TTL: ${CONNECTION_LEASE_TTL:-30s}
       COMMAND_RECONCILE_INTERVAL: ${COMMAND_RECONCILE_INTERVAL:-1s}
-    ports: ["6080:6080"]
+    ports: ["${SERVICE_BIND_ADDRESS:-127.0.0.1}:${GATEWAY_PORT:-6080}:6080"]
     depends_on:
       kafka-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -86,16 +109,19 @@ services:
       timeout: 3s
       retries: 20
   engine:
+    <<: *service-defaults
     build:
       context: ..
       dockerfile: Dockerfile
       args: { SERVICE: engine }
     environment:
+      APP_ENV: ${APP_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       ENGINE_PORT: "6081"
       KAFKA_BROKER_URL: redpanda:29092
       REDIS_URL: redis://redis:6379/0
-      POSTGRES_URL: postgres://polaris_user:polaris_password@postgres:5432/polaris_core?sslmode=disable
-      DEV_PLATFORM_ADMIN_TOKEN: ${DEV_PLATFORM_ADMIN_TOKEN:-}
+      POSTGRES_URL: postgres://${POSTGRES_USER:-polaris_user}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in backend/deployments/.env}@postgres:5432/${POSTGRES_DB:-polaris_core}?sslmode=disable
+      DEV_PLATFORM_ADMIN_TOKEN: ${DEV_PLATFORM_ADMIN_TOKEN:?Set DEV_PLATFORM_ADMIN_TOKEN in backend/deployments/.env}
       DEVICE_STALE_AFTER: ${DEVICE_STALE_AFTER:-30s}
       DEVICE_OFFLINE_AFTER: ${DEVICE_OFFLINE_AFTER:-90s}
       OFFLINE_SCAN_INTERVAL: ${OFFLINE_SCAN_INTERVAL:-10s}
@@ -129,7 +155,7 @@ services:
       MOBILITY_TRAFFIC_SCOPE: ${MOBILITY_TRAFFIC_SCOPE:-SHARED_TRUSTED}
       MOBILITY_ROAD_GRAPH_PATH: ${MOBILITY_ROAD_GRAPH_PATH:-data/chennai-metro.osm.pbf}
       MOBILITY_ROAD_GRAPH_VERSION: ${MOBILITY_ROAD_GRAPH_VERSION:-chennai-v1}
-    ports: ["6081:6081"]
+    ports: ["${SERVICE_BIND_ADDRESS:-127.0.0.1}:${ENGINE_PORT:-6081}:6081"]
     depends_on:
       kafka-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -141,10 +167,11 @@ services:
       retries: 30
       start_period: 20s
   frontend:
+    <<: *service-defaults
     build:
       context: ../../frontend
       dockerfile: Dockerfile
-    ports: ["5173:80"]
+    ports: ["${PUBLIC_BIND_ADDRESS:-0.0.0.0}:${FRONTEND_PORT:-5173}:80"]
     depends_on:
       gateway: { condition: service_healthy }
       engine: { condition: service_healthy }
@@ -156,3 +183,8 @@ services:
 volumes:
   polaris_pg_data:
   polaris_redpanda_data:
+  polaris_redis_data:
+
+networks:
+  polaris:
+    driver: bridge

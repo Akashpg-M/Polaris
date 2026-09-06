@@ -85,6 +85,7 @@ func (c *KafkaConsumer) process(ctx context.Context, item pendingTelemetry) bool
 		slog.Warn("permanent telemetry failure sent to DLQ", "partition", item.message.Partition, "offset", item.message.Offset, "error", err)
 		return true
 	}
+
 	var lastErr error
 	for attempt := 1; attempt <= c.maxRetries; attempt++ {
 		redisClass, projectionErr := c.projector.Apply(ctx, envelope)

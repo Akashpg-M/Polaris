@@ -89,6 +89,8 @@ func (e *Engine) BatchUpdate(payloads []*pb.SpatialObject) {
 // the freshness authority and Mobility owns indexed candidate discovery. This
 // bounded linear scan deliberately avoids retaining the former non-subdividing
 // "QuadTree" as a second production spatial authority.
+
+
 func (e *Engine) FindNearest(tenantID string, lat, lon, radiusKm float64, reqType pb.NodeType) []MatchResult {
 	var results []MatchResult
 	for _, shard := range e.shards {

@@ -17,12 +17,14 @@ type EdgeTrafficState struct {
 	LastObservedAt time.Time `json:"last_observed_at"`
 	Confidence     float64   `json:"confidence"`
 }
+
 type TrafficObservation struct {
 	Position       model.Position
 	HeadingDegrees *float64
 	SpeedMPS       float64
 	ObservedAt     time.Time
 }
+
 type TrafficManager struct {
 	mu        sync.RWMutex
 	graph     *RoadGraph
